@@ -216,18 +216,37 @@ func (r *UserReconciler) createOrUpdate(ctx context.Context, obj client.Object) 
 	return r.Update(ctx, obj)
 }
 
-// cleanup all resources owned by a user
+// cleanupUserResources deletes all resources related to the user.
 func (r *UserReconciler) cleanupUserResources(ctx context.Context, user *authv1alpha1.User) error {
 	username := user.Name
-	resources := []client.Object{
+
+	// Delete fixed resources
+	fixed := []client.Object{
 		&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: username, Namespace: kubeUserNamespace}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("%s-key", username), Namespace: kubeUserNamespace}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("%s-kubeconfig", username), Namespace: kubeUserNamespace}},
 		&certv1.CertificateSigningRequest{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("%s-csr", username)}},
 	}
-	for _, obj := range resources {
+	for _, obj := range fixed {
 		_ = r.Delete(ctx, obj)
 	}
+
+	// Delete RoleBindings across namespaces
+	var rbs rbacv1.RoleBindingList
+	if err := r.List(ctx, &rbs, client.MatchingLabels{"auth.openkube.io/user": username}); err == nil {
+		for _, rb := range rbs.Items {
+			_ = r.Delete(ctx, &rb)
+		}
+	}
+
+	// Delete ClusterRoleBindings
+	var crbs rbacv1.ClusterRoleBindingList
+	if err := r.List(ctx, &crbs, client.MatchingLabels{"auth.openkube.io/user": username}); err == nil {
+		for _, crb := range crbs.Items {
+			_ = r.Delete(ctx, &crb)
+		}
+	}
+
 	return nil
 }
 
