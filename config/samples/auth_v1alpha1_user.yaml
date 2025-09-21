@@ -1,0 +1,9 @@
+apiVersion: auth.openkube.io/v1alpha1
+kind: User
+metadata:
+  labels:
+    app.kubernetes.io/name: kubeuser
+    app.kubernetes.io/managed-by: kustomize
+  name: user-sample
+spec:
+  # TODO(user): Add fields here
