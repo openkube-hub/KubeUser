@@ -1,0 +1,11 @@
+apiVersion: auth.openkube.io/v1alpha1
+kind: User
+metadata:
+  name: jane-dev
+spec:
+  roles:
+    - namespace: dev
+      existingRole: developer
+  clusterRoles:
+    - existingClusterRole: view
+  expiry: 7d
