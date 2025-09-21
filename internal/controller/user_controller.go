@@ -51,6 +51,7 @@ type UserReconciler struct {
 // +kubebuilder:rbac:groups=auth.openkube.io,resources=users,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=auth.openkube.io,resources=users/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=auth.openkube.io,resources=users/finalizers,verbs=update
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;clusterroles,verbs=get;list;watch
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings;clusterrolebindings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups="",resources=serviceaccounts;secrets;configmaps,verbs=get;list;watch;create;update;patch;delete
@@ -108,8 +109,22 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, err
 	}
 
-	// Ensure RoleBindings
+	// === Ensure RoleBindings ===
 	for _, role := range user.Spec.Roles {
+		// Validate Role exists
+		var roleObj rbacv1.Role
+		if err := r.Get(ctx, types.NamespacedName{Name: role.ExistingRole, Namespace: role.Namespace}, &roleObj); err != nil {
+			if apierrors.IsNotFound(err) {
+				msg := fmt.Sprintf("Role %s not found in namespace %s", role.ExistingRole, role.Namespace)
+				logger.Error(err, msg)
+				user.Status.Phase = "Error"
+				user.Status.Message = msg
+				_ = r.Status().Update(ctx, &user)
+				return ctrl.Result{}, nil
+			}
+			return ctrl.Result{}, err
+		}
+
 		rb := &rbacv1.RoleBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      fmt.Sprintf("%s-%s-rb", username, role.ExistingRole),
@@ -127,13 +142,26 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 			},
 		}
 		if err := r.createOrUpdate(ctx, rb); err != nil {
-			logger.Error(err, "failed RoleBinding", "role", role.ExistingRole)
 			return ctrl.Result{}, err
 		}
 	}
 
-	// Ensure ClusterRoleBindings
+	// === Ensure ClusterRoleBindings ===
 	for _, cr := range user.Spec.ClusterRoles {
+		// Validate ClusterRole exists
+		var crObj rbacv1.ClusterRole
+		if err := r.Get(ctx, types.NamespacedName{Name: cr.ExistingClusterRole}, &crObj); err != nil {
+			if apierrors.IsNotFound(err) {
+				msg := fmt.Sprintf("ClusterRole %s not found", cr.ExistingClusterRole)
+				logger.Error(err, msg)
+				user.Status.Phase = "Error"
+				user.Status.Message = msg
+				_ = r.Status().Update(ctx, &user)
+				return ctrl.Result{}, nil
+			}
+			return ctrl.Result{}, err
+		}
+
 		crb := &rbacv1.ClusterRoleBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   fmt.Sprintf("%s-%s-crb", username, cr.ExistingClusterRole),
@@ -150,7 +178,6 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 			},
 		}
 		if err := r.createOrUpdate(ctx, crb); err != nil {
-			logger.Error(err, "failed ClusterRoleBinding", "clusterRole", cr.ExistingClusterRole)
 			return ctrl.Result{}, err
 		}
 	}
@@ -250,7 +277,8 @@ func (r *UserReconciler) cleanupUserResources(ctx context.Context, user *authv1a
 	return nil
 }
 
-// ensureCertKubeconfig with persistent key
+// === Certificate helpers ===
+
 func (r *UserReconciler) ensureCertKubeconfig(ctx context.Context, user *authv1alpha1.User) (bool, error) {
 	username := user.Name
 	keySecretName := fmt.Sprintf("%s-key", username)
