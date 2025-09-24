@@ -43,19 +43,20 @@ KubeUser follows the standard Kubernetes operator pattern:
 
 #### 🚧 Planned Features
 - [ ] Reconciliation Loop: Continuous monitoring and enforcement of user permissions
-- [ ] Finalizers: Proper cleanup of user resources when User objects are deleted
-- [ ] Certificate Management: Automatic generation of client certificates for users
-- [ ] Kubeconfig Generation: Creates ready-to-use kubeconfig files stored as secrets
-- [ ] RBAC Integration: Creates RoleBindings and ClusterRoleBindings based on User spec
-- [ ] Role Validation: Validates that referenced Roles and ClusterRoles exist
+- [X] Finalizers: Proper cleanup of user resources when User objects are deleted
+- [X] Certificate Management: Automatic generation of client certificates for users
+- [X] Kubeconfig Generation: Creates ready-to-use kubeconfig files stored as secrets
+- [X] RBAC Integration: Creates RoleBindings and ClusterRoleBindings based on User spec
+- [X] Role Validation: Validates that referenced Roles and ClusterRoles exist
 - [ ] Status Reporting: Comprehensive status updates with conditions
+- [ ] **Webhook validation for User resources**
+- [ ] **Certificate rotation and renewal**
+- [ ] **Templated Roles**: Provide predefined reusable RBAC role templates for common use cases
 - [ ] Expiry Support: Time-based access control with configurable expiration
 - [ ] High availability: support for multi-replica deployments
 - [ ] Metrics Endpoint: Prometheus-compatible metrics on port 8080
 - [ ] Health Checks: Liveness and readiness probes for robust deployments
 - [ ] Resource Cleanup: Automatic cleanup of associated resources on user deletion
-- [ ] Webhook validation for User resources
-- [ ] Certificate rotation and renewal
 - [ ] User group management
 - [ ] Audit logging for user access changes
 - [ ] Grafana dashboard for user management metrics
