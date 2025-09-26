@@ -109,77 +109,22 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, err
 	}
 
-	// === Ensure RoleBindings ===
-	for _, role := range user.Spec.Roles {
-		// Validate Role exists
-		var roleObj rbacv1.Role
-		if err := r.Get(ctx, types.NamespacedName{Name: role.ExistingRole, Namespace: role.Namespace}, &roleObj); err != nil {
-			if apierrors.IsNotFound(err) {
-				msg := fmt.Sprintf("Role %s not found in namespace %s", role.ExistingRole, role.Namespace)
-				logger.Error(err, msg)
-				user.Status.Phase = "Error"
-				user.Status.Message = msg
-				_ = r.Status().Update(ctx, &user)
-				return ctrl.Result{}, nil
-			}
-			return ctrl.Result{}, err
-		}
-
-		rb := &rbacv1.RoleBinding{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      fmt.Sprintf("%s-%s-rb", username, role.ExistingRole),
-				Namespace: role.Namespace,
-				Labels:    map[string]string{"auth.openkube.io/user": username},
-			},
-			Subjects: []rbacv1.Subject{{
-				Kind: "User",
-				Name: username,
-			}},
-			RoleRef: rbacv1.RoleRef{
-				APIGroup: "rbac.authorization.k8s.io",
-				Kind:     "Role",
-				Name:     role.ExistingRole,
-			},
-		}
-		if err := r.createOrUpdate(ctx, rb); err != nil {
-			return ctrl.Result{}, err
-		}
+	// === Reconcile RoleBindings ===
+	if err := r.reconcileRoleBindings(ctx, &user); err != nil {
+		logger.Error(err, "Failed to reconcile RoleBindings")
+		user.Status.Phase = "Error"
+		user.Status.Message = fmt.Sprintf("Failed to reconcile RoleBindings: %v", err)
+		_ = r.Status().Update(ctx, &user)
+		return ctrl.Result{}, err
 	}
 
-	// === Ensure ClusterRoleBindings ===
-	for _, cr := range user.Spec.ClusterRoles {
-		// Validate ClusterRole exists
-		var crObj rbacv1.ClusterRole
-		if err := r.Get(ctx, types.NamespacedName{Name: cr.ExistingClusterRole}, &crObj); err != nil {
-			if apierrors.IsNotFound(err) {
-				msg := fmt.Sprintf("ClusterRole %s not found", cr.ExistingClusterRole)
-				logger.Error(err, msg)
-				user.Status.Phase = "Error"
-				user.Status.Message = msg
-				_ = r.Status().Update(ctx, &user)
-				return ctrl.Result{}, nil
-			}
-			return ctrl.Result{}, err
-		}
-
-		crb := &rbacv1.ClusterRoleBinding{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:   fmt.Sprintf("%s-%s-crb", username, cr.ExistingClusterRole),
-				Labels: map[string]string{"auth.openkube.io/user": username},
-			},
-			Subjects: []rbacv1.Subject{{
-				Kind: "User",
-				Name: username,
-			}},
-			RoleRef: rbacv1.RoleRef{
-				APIGroup: "rbac.authorization.k8s.io",
-				Kind:     "ClusterRole",
-				Name:     cr.ExistingClusterRole,
-			},
-		}
-		if err := r.createOrUpdate(ctx, crb); err != nil {
-			return ctrl.Result{}, err
-		}
+	// === Reconcile ClusterRoleBindings ===
+	if err := r.reconcileClusterRoleBindings(ctx, &user); err != nil {
+		logger.Error(err, "Failed to reconcile ClusterRoleBindings")
+		user.Status.Phase = "Error"
+		user.Status.Message = fmt.Sprintf("Failed to reconcile ClusterRoleBindings: %v", err)
+		_ = r.Status().Update(ctx, &user)
+		return ctrl.Result{}, err
 	}
 
 	// Ensure cert-based kubeconfig
@@ -212,6 +157,10 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 func (r *UserReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&authv1alpha1.User{}).
+		Owns(&rbacv1.RoleBinding{}).
+		Owns(&rbacv1.ClusterRoleBinding{}).
+		Owns(&corev1.ServiceAccount{}).
+		Owns(&corev1.Secret{}).
 		Named("user").
 		Complete(r)
 }
@@ -275,6 +224,219 @@ func (r *UserReconciler) cleanupUserResources(ctx context.Context, user *authv1a
 	}
 
 	return nil
+}
+
+// reconcileRoleBindings ensures the correct RoleBindings exist and removes outdated ones
+func (r *UserReconciler) reconcileRoleBindings(ctx context.Context, user *authv1alpha1.User) error {
+	username := user.Name
+	logger := logf.FromContext(ctx)
+
+	// Get all existing RoleBindings for this user
+	var existingRBs rbacv1.RoleBindingList
+	if err := r.List(ctx, &existingRBs, client.MatchingLabels{"auth.openkube.io/user": username}); err != nil {
+		return fmt.Errorf("failed to list existing RoleBindings: %w", err)
+	}
+
+	// Create a map of desired RoleBindings (namespace:role -> RoleSpec)
+	desiredRBs := make(map[string]authv1alpha1.RoleSpec)
+	for _, role := range user.Spec.Roles {
+		// Validate that the Role exists
+		var roleObj rbacv1.Role
+		if err := r.Get(ctx, types.NamespacedName{Name: role.ExistingRole, Namespace: role.Namespace}, &roleObj); err != nil {
+			if apierrors.IsNotFound(err) {
+				return fmt.Errorf("role %s not found in namespace %s", role.ExistingRole, role.Namespace)
+			}
+			return fmt.Errorf("failed to get role %s in namespace %s: %w", role.ExistingRole, role.Namespace, err)
+		}
+		key := fmt.Sprintf("%s:%s", role.Namespace, role.ExistingRole)
+		desiredRBs[key] = role
+	}
+
+	// Create a map of existing RoleBindings for easy lookup
+	existingRBMap := make(map[string]*rbacv1.RoleBinding)
+	for i := range existingRBs.Items {
+		rb := &existingRBs.Items[i]
+		key := fmt.Sprintf("%s:%s", rb.Namespace, rb.RoleRef.Name)
+		existingRBMap[key] = rb
+	}
+
+	// Create or update desired RoleBindings
+	for key, roleSpec := range desiredRBs {
+		rbName := fmt.Sprintf("%s-%s-rb", username, roleSpec.ExistingRole)
+		desiredRB := &rbacv1.RoleBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      rbName,
+				Namespace: roleSpec.Namespace,
+				Labels:    map[string]string{"auth.openkube.io/user": username},
+				OwnerReferences: []metav1.OwnerReference{{
+					APIVersion: "auth.openkube.io/v1alpha1",
+					Kind:       "User",
+					Name:       user.Name,
+					UID:        user.UID,
+					Controller: &[]bool{true}[0],
+				}},
+			},
+			Subjects: []rbacv1.Subject{{
+				Kind: "User",
+				Name: username,
+			}},
+			RoleRef: rbacv1.RoleRef{
+				APIGroup: "rbac.authorization.k8s.io",
+				Kind:     "Role",
+				Name:     roleSpec.ExistingRole,
+			},
+		}
+
+		if existingRB, exists := existingRBMap[key]; exists {
+			// Update existing RoleBinding if it differs
+			if !roleBindingMatches(existingRB, desiredRB) {
+				logger.Info("Updating RoleBinding", "name", rbName, "namespace", roleSpec.Namespace)
+				desiredRB.ResourceVersion = existingRB.ResourceVersion
+				if err := r.Update(ctx, desiredRB); err != nil {
+					return fmt.Errorf("failed to update RoleBinding %s in namespace %s: %w", rbName, roleSpec.Namespace, err)
+				}
+			}
+			// Remove from the map so we know it's been processed
+			delete(existingRBMap, key)
+		} else {
+			// Create new RoleBinding
+			logger.Info("Creating RoleBinding", "name", rbName, "namespace", roleSpec.Namespace)
+			if err := r.Create(ctx, desiredRB); err != nil {
+				return fmt.Errorf("failed to create RoleBinding %s in namespace %s: %w", rbName, roleSpec.Namespace, err)
+			}
+		}
+	}
+
+	// Delete any remaining RoleBindings (these are no longer desired)
+	for _, rb := range existingRBMap {
+		logger.Info("Deleting outdated RoleBinding", "name", rb.Name, "namespace", rb.Namespace)
+		if err := r.Delete(ctx, rb); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete outdated RoleBinding %s in namespace %s: %w", rb.Name, rb.Namespace, err)
+		}
+	}
+
+	return nil
+}
+
+// reconcileClusterRoleBindings ensures the correct ClusterRoleBindings exist and removes outdated ones
+func (r *UserReconciler) reconcileClusterRoleBindings(ctx context.Context, user *authv1alpha1.User) error {
+	username := user.Name
+	logger := logf.FromContext(ctx)
+
+	// Get all existing ClusterRoleBindings for this user
+	var existingCRBs rbacv1.ClusterRoleBindingList
+	if err := r.List(ctx, &existingCRBs, client.MatchingLabels{"auth.openkube.io/user": username}); err != nil {
+		return fmt.Errorf("failed to list existing ClusterRoleBindings: %w", err)
+	}
+
+	// Create a map of desired ClusterRoleBindings (clusterRole -> ClusterRoleSpec)
+	desiredCRBs := make(map[string]authv1alpha1.ClusterRoleSpec)
+	for _, clusterRole := range user.Spec.ClusterRoles {
+		// Validate that the ClusterRole exists
+		var crObj rbacv1.ClusterRole
+		if err := r.Get(ctx, types.NamespacedName{Name: clusterRole.ExistingClusterRole}, &crObj); err != nil {
+			if apierrors.IsNotFound(err) {
+				return fmt.Errorf("clusterrole %s not found", clusterRole.ExistingClusterRole)
+			}
+			return fmt.Errorf("failed to get clusterrole %s: %w", clusterRole.ExistingClusterRole, err)
+		}
+		desiredCRBs[clusterRole.ExistingClusterRole] = clusterRole
+	}
+
+	// Create a map of existing ClusterRoleBindings for easy lookup
+	existingCRBMap := make(map[string]*rbacv1.ClusterRoleBinding)
+	for i := range existingCRBs.Items {
+		crb := &existingCRBs.Items[i]
+		existingCRBMap[crb.RoleRef.Name] = crb
+	}
+
+	// Create or update desired ClusterRoleBindings
+	for clusterRoleName, clusterRoleSpec := range desiredCRBs {
+		crbName := fmt.Sprintf("%s-%s-crb", username, clusterRoleName)
+		desiredCRB := &rbacv1.ClusterRoleBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   crbName,
+				Labels: map[string]string{"auth.openkube.io/user": username},
+				OwnerReferences: []metav1.OwnerReference{{
+					APIVersion: "auth.openkube.io/v1alpha1",
+					Kind:       "User",
+					Name:       user.Name,
+					UID:        user.UID,
+					Controller: &[]bool{true}[0],
+				}},
+			},
+			Subjects: []rbacv1.Subject{{
+				Kind: "User",
+				Name: username,
+			}},
+			RoleRef: rbacv1.RoleRef{
+				APIGroup: "rbac.authorization.k8s.io",
+				Kind:     "ClusterRole",
+				Name:     clusterRoleSpec.ExistingClusterRole,
+			},
+		}
+
+		if existingCRB, exists := existingCRBMap[clusterRoleName]; exists {
+			// Update existing ClusterRoleBinding if it differs
+			if !clusterRoleBindingMatches(existingCRB, desiredCRB) {
+				logger.Info("Updating ClusterRoleBinding", "name", crbName)
+				desiredCRB.ResourceVersion = existingCRB.ResourceVersion
+				if err := r.Update(ctx, desiredCRB); err != nil {
+					return fmt.Errorf("failed to update ClusterRoleBinding %s: %w", crbName, err)
+				}
+			}
+			// Remove from the map so we know it's been processed
+			delete(existingCRBMap, clusterRoleName)
+		} else {
+			// Create new ClusterRoleBinding
+			logger.Info("Creating ClusterRoleBinding", "name", crbName)
+			if err := r.Create(ctx, desiredCRB); err != nil {
+				return fmt.Errorf("failed to create ClusterRoleBinding %s: %w", crbName, err)
+			}
+		}
+	}
+
+	// Delete any remaining ClusterRoleBindings (these are no longer desired)
+	for _, crb := range existingCRBMap {
+		logger.Info("Deleting outdated ClusterRoleBinding", "name", crb.Name)
+		if err := r.Delete(ctx, crb); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete outdated ClusterRoleBinding %s: %w", crb.Name, err)
+		}
+	}
+
+	return nil
+}
+
+// roleBindingMatches checks if two RoleBindings are functionally equivalent
+func roleBindingMatches(existing, desired *rbacv1.RoleBinding) bool {
+	// Check if RoleRef matches
+	if existing.RoleRef != desired.RoleRef {
+		return false
+	}
+
+	// Check if subjects match (we expect exactly one subject)
+	if len(existing.Subjects) != 1 || len(desired.Subjects) != 1 {
+		return false
+	}
+
+	return existing.Subjects[0].Kind == desired.Subjects[0].Kind &&
+		existing.Subjects[0].Name == desired.Subjects[0].Name
+}
+
+// clusterRoleBindingMatches checks if two ClusterRoleBindings are functionally equivalent
+func clusterRoleBindingMatches(existing, desired *rbacv1.ClusterRoleBinding) bool {
+	// Check if RoleRef matches
+	if existing.RoleRef != desired.RoleRef {
+		return false
+	}
+
+	// Check if subjects match (we expect exactly one subject)
+	if len(existing.Subjects) != 1 || len(desired.Subjects) != 1 {
+		return false
+	}
+
+	return existing.Subjects[0].Kind == desired.Subjects[0].Kind &&
+		existing.Subjects[0].Name == desired.Subjects[0].Name
 }
 
 // === Certificate helpers ===

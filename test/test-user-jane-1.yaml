@@ -7,5 +7,4 @@ spec:
     - namespace: dev
       existingRole: developer
   clusterRoles:
-    - existingClusterRole: view
-  expiry: 7d
+    - existingClusterRole: edit
