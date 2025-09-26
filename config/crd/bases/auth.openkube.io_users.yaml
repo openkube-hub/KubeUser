@@ -14,7 +14,25 @@ spec:
     singular: user
   scope: Cluster
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - description: Current phase of the user
+      jsonPath: .status.phase
+      name: Phase
+      type: string
+    - description: User access expiry time
+      jsonPath: .status.expiryTime
+      name: Expiry
+      type: string
+    - description: Time since the user was created
+      jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    - description: Status message
+      jsonPath: .status.message
+      name: Message
+      priority: 1
+      type: string
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: User is the Schema for the users API
@@ -83,6 +101,11 @@ spec:
           status:
             description: UserStatus defines the observed state of User
             properties:
+              certificateExpiry:
+                description: |-
+                  CertificateExpiry indicates if the expiry time comes from actual certificate
+                  Values: "Certificate", "Calculated", "Unknown"
+                type: string
               conditions:
                 description: Conditions follow Kubernetes conventions for detailed
                   status
@@ -142,8 +165,9 @@ spec:
                   type: object
                 type: array
               expiryTime:
-                description: ExpiryTime is the actual calculated expiry timestamp
-                  (RFC3339 format)
+                description: |-
+                  ExpiryTime is the actual expiry timestamp (RFC3339 format)
+                  This comes from the actual certificate NotAfter time when available
                 type: string
               message:
                 description: Message provides details about the current status
