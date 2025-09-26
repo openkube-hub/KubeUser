@@ -48,9 +48,15 @@ type UserSpec struct {
 
 // UserStatus defines the observed state of User
 type UserStatus struct {
-	// ExpiryTime is the actual calculated expiry timestamp (RFC3339 format)
+	// ExpiryTime is the actual expiry timestamp (RFC3339 format)
+	// This comes from the actual certificate NotAfter time when available
 	// +optional
 	ExpiryTime string `json:"expiryTime,omitempty"`
+
+	// CertificateExpiry indicates if the expiry time comes from actual certificate
+	// Values: "Certificate", "Calculated", "Unknown"
+	// +optional
+	CertificateExpiry string `json:"certificateExpiry,omitempty"`
 
 	// Phase is a simple high-level status (Pending, Active, Expired, Error)
 	// +optional
@@ -72,6 +78,10 @@ type UserStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster
+// +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase",description="Current phase of the user"
+// +kubebuilder:printcolumn:name="Expiry",type="string",JSONPath=".status.expiryTime",description="User access expiry time"
+// +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp",description="Time since the user was created"
+// +kubebuilder:printcolumn:name="Message",type="string",JSONPath=".status.message",description="Status message",priority=1
 
 // User is the Schema for the users API
 type User struct {

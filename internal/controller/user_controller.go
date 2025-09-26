@@ -62,42 +62,78 @@ type UserReconciler struct {
 // Reconcile main loop
 func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := logf.FromContext(ctx)
+	logger.Info("=== START RECONCILE ===", "user", req.Name)
 
 	var user authv1alpha1.User
 	if err := r.Get(ctx, req.NamespacedName, &user); err != nil {
+		logger.Info("User not found, ignoring", "user", req.Name, "error", err)
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	username := user.Name
-	logger.Info("Reconciling User", "name", username)
+	logger.Info("Reconciling User", "name", username, "generation", user.Generation, "resourceVersion", user.ResourceVersion)
+
+	// Ensure initial status is set
+	logger.Info("Checking initial status", "currentPhase", user.Status.Phase)
+	if user.Status.Phase == "" {
+		logger.Info("Setting initial status to Pending")
+		user.Status.Phase = "Pending"
+		user.Status.Message = "Initializing user resources"
+		if err := r.Status().Update(ctx, &user); err != nil {
+			logger.Error(err, "Failed to set initial status")
+			// Don't return error, continue with reconciliation
+		} else {
+			logger.Info("Successfully set initial status")
+		}
+	} else {
+		logger.Info("Status already set, skipping initial status", "phase", user.Status.Phase)
+	}
 
 	// Handle deletion
+	logger.Info("Checking deletion", "deletionTimestamp", user.ObjectMeta.DeletionTimestamp)
 	if !user.ObjectMeta.DeletionTimestamp.IsZero() {
+		logger.Info("User is being deleted, starting cleanup")
 		if containsString(user.Finalizers, userFinalizer) {
+			logger.Info("Cleaning up user resources")
 			if err := r.cleanupUserResources(ctx, &user); err != nil {
+				logger.Error(err, "Failed to cleanup user resources")
 				return ctrl.Result{}, err
 			}
+			logger.Info("Removing finalizer")
 			user.Finalizers = removeString(user.Finalizers, userFinalizer)
 			if err := r.Update(ctx, &user); err != nil {
+				logger.Error(err, "Failed to remove finalizer")
 				return ctrl.Result{}, err
 			}
+			logger.Info("Successfully cleaned up and removed finalizer")
 		}
+		logger.Info("=== END RECONCILE (DELETION) ===")
 		return ctrl.Result{}, nil
 	}
 
 	// Ensure finalizer
+	logger.Info("Checking finalizer", "currentFinalizers", user.Finalizers)
 	if !containsString(user.Finalizers, userFinalizer) {
+		logger.Info("Adding finalizer", "finalizer", userFinalizer)
 		user.Finalizers = append(user.Finalizers, userFinalizer)
 		if err := r.Update(ctx, &user); err != nil {
+			logger.Error(err, "Failed to add finalizer")
 			return ctrl.Result{}, err
 		}
+		logger.Info("Successfully added finalizer")
+	} else {
+		logger.Info("Finalizer already exists, skipping")
 	}
 
 	// Ensure kubeuser namespace
+	logger.Info("Ensuring kubeuser namespace", "namespace", kubeUserNamespace)
 	if err := r.ensureNamespace(ctx, kubeUserNamespace); err != nil {
+		logger.Error(err, "Failed to ensure kubeuser namespace")
 		return ctrl.Result{}, err
 	}
+	logger.Info("Kubeuser namespace ensured")
 
 	// Ensure ServiceAccount (identity anchor)
+	logger.Info("Creating/updating ServiceAccount", "name", username, "namespace", kubeUserNamespace)
 	sa := &corev1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      username,
@@ -106,10 +142,13 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		},
 	}
 	if err := r.createOrUpdate(ctx, sa); err != nil {
+		logger.Error(err, "Failed to create/update ServiceAccount")
 		return ctrl.Result{}, err
 	}
+	logger.Info("ServiceAccount created/updated successfully")
 
 	// === Reconcile RoleBindings ===
+	logger.Info("Starting RoleBindings reconciliation", "rolesCount", len(user.Spec.Roles))
 	if err := r.reconcileRoleBindings(ctx, &user); err != nil {
 		logger.Error(err, "Failed to reconcile RoleBindings")
 		user.Status.Phase = "Error"
@@ -117,8 +156,10 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		_ = r.Status().Update(ctx, &user)
 		return ctrl.Result{}, err
 	}
+	logger.Info("RoleBindings reconciliation completed")
 
 	// === Reconcile ClusterRoleBindings ===
+	logger.Info("Starting ClusterRoleBindings reconciliation", "clusterRolesCount", len(user.Spec.ClusterRoles))
 	if err := r.reconcileClusterRoleBindings(ctx, &user); err != nil {
 		logger.Error(err, "Failed to reconcile ClusterRoleBindings")
 		user.Status.Phase = "Error"
@@ -126,31 +167,59 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		_ = r.Status().Update(ctx, &user)
 		return ctrl.Result{}, err
 	}
+	logger.Info("ClusterRoleBindings reconciliation completed")
+
+	// Update status after successful RBAC reconciliation
+	logger.Info("*** CALLING updateUserStatus ***")
+	if err := r.updateUserStatus(ctx, &user); err != nil {
+		logger.Error(err, "Failed to update user status")
+		// Don't return error, continue with certificate processing
+	} else {
+		logger.Info("*** updateUserStatus completed successfully ***")
+	}
 
 	// Ensure cert-based kubeconfig
+	logger.Info("Starting certificate/kubeconfig processing")
 	requeue, err := r.ensureCertKubeconfig(ctx, &user)
 	if err != nil {
+		logger.Error(err, "Failed to ensure certificate kubeconfig")
+		logger.Info("=== END RECONCILE (CERT ERROR) ===")
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 	if requeue {
+		logger.Info("Certificate processing needs requeue")
+		logger.Info("=== END RECONCILE (REQUEUE) ===")
 		return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
 	}
+	logger.Info("Certificate/kubeconfig processing completed")
 
-	// Update status
-	expiry := time.Now().Add(defaultExpiry)
-	if user.Spec.Expiry != "" {
-		if d, err := time.ParseDuration(user.Spec.Expiry); err == nil {
-			expiry = time.Now().Add(d)
+	// Requeue if user is close to expiry to handle cleanup
+	logger.Info("Checking expiry for requeue", "phase", user.Status.Phase, "expiryTime", user.Status.ExpiryTime)
+	if user.Status.Phase == "Active" && user.Status.ExpiryTime != "" {
+		if expiryTime, err := time.Parse(time.RFC3339, user.Status.ExpiryTime); err == nil {
+			timeUntilExpiry := time.Until(expiryTime)
+			logger.Info("Time until expiry", "duration", timeUntilExpiry)
+			if timeUntilExpiry <= 0 {
+				// User has expired, mark as expired
+				logger.Info("User has expired, updating status")
+				user.Status.Phase = "Expired"
+				user.Status.Message = "User access has expired"
+				_ = r.Status().Update(ctx, &user)
+				logger.Info("=== END RECONCILE (EXPIRED) ===")
+				return ctrl.Result{}, nil
+			} else if timeUntilExpiry < 24*time.Hour {
+				// Requeue to check expiry more frequently
+				logger.Info("User expires soon, requeueing in 1 hour")
+				logger.Info("=== END RECONCILE (EXPIRY REQUEUE) ===")
+				return ctrl.Result{RequeueAfter: time.Hour}, nil
+			}
+		} else {
+			logger.Error(err, "Failed to parse expiry time", "expiryTime", user.Status.ExpiryTime)
 		}
 	}
-	user.Status.Phase = "Active"
-	user.Status.ExpiryTime = expiry.Format(time.RFC3339)
-	user.Status.Message = "User provisioned"
-	if err := r.Status().Update(ctx, &user); err != nil {
-		logger.Error(err, "status update failed")
-	}
 
-	return ctrl.Result{}, nil
+	logger.Info("=== END RECONCILE (SUCCESS) ===, requeueing in 30 minutes")
+	return ctrl.Result{RequeueAfter: 30 * time.Minute}, nil // Regular reconciliation
 }
 
 // SetupWithManager wires the controller
@@ -223,6 +292,112 @@ func (r *UserReconciler) cleanupUserResources(ctx context.Context, user *authv1a
 		}
 	}
 
+	return nil
+}
+
+// updateUserStatus calculates and updates the user status based on current state
+func (r *UserReconciler) updateUserStatus(ctx context.Context, user *authv1alpha1.User) error {
+	logger := logf.FromContext(ctx)
+	logger.Info("Updating user status", "name", user.Name)
+
+	// Always set expiry time if not set
+	if user.Status.ExpiryTime == "" {
+		expiry := r.calculateExpiry(user)
+		user.Status.ExpiryTime = expiry.Format(time.RFC3339)
+		user.Status.CertificateExpiry = "Calculated"
+		logger.Info("Set calculated expiry time", "expiry", user.Status.ExpiryTime)
+	}
+
+	// Parse expiry for phase determination
+	expiry, err := time.Parse(time.RFC3339, user.Status.ExpiryTime)
+	if err != nil {
+		// If we can't parse the existing expiry, recalculate it
+		expiry = r.calculateExpiry(user)
+		user.Status.ExpiryTime = expiry.Format(time.RFC3339)
+		user.Status.CertificateExpiry = "Calculated"
+		logger.Info("Recalculated expiry due to parse error", "error", err, "expiry", user.Status.ExpiryTime)
+	}
+
+	// Check if user has expired
+	if time.Now().After(expiry) {
+		user.Status.Phase = "Expired"
+		user.Status.Message = "User access has expired"
+	} else {
+		// User is active
+		user.Status.Phase = "Active"
+		roleCount := len(user.Spec.Roles)
+		clusterRoleCount := len(user.Spec.ClusterRoles)
+		totalRoles := roleCount + clusterRoleCount
+
+		if totalRoles == 0 {
+			user.Status.Message = "User has no assigned roles"
+		} else {
+			msg := fmt.Sprintf("User provisioned with %d role(s)", totalRoles)
+			if roleCount > 0 && clusterRoleCount > 0 {
+				msg = fmt.Sprintf("User provisioned with %d namespace role(s) and %d cluster role(s)", roleCount, clusterRoleCount)
+			} else if roleCount > 0 {
+				msg = fmt.Sprintf("User provisioned with %d namespace role(s)", roleCount)
+			} else {
+				msg = fmt.Sprintf("User provisioned with %d cluster role(s)", clusterRoleCount)
+			}
+			user.Status.Message = msg
+		}
+	}
+
+	// Add condition for better status tracking
+	now := metav1.NewTime(time.Now())
+	conditionType := "Ready"
+	conditionStatus := metav1.ConditionTrue
+	conditionReason := "UserProvisioned"
+	conditionMessage := user.Status.Message
+
+	if user.Status.Phase == "Error" {
+		conditionType = "Ready"
+		conditionStatus = metav1.ConditionFalse
+		conditionReason = "ProvisioningFailed"
+	} else if user.Status.Phase == "Expired" {
+		conditionType = "Ready"
+		conditionStatus = metav1.ConditionFalse
+		conditionReason = "UserExpired"
+	} else if user.Status.Phase == "Pending" {
+		conditionType = "Ready"
+		conditionStatus = metav1.ConditionFalse
+		conditionReason = "Provisioning"
+	}
+
+	// Update or add condition
+	updatedConditions := []metav1.Condition{}
+	conditionFound := false
+	for _, condition := range user.Status.Conditions {
+		if condition.Type == conditionType {
+			condition.Status = conditionStatus
+			condition.Reason = conditionReason
+			condition.Message = conditionMessage
+			condition.LastTransitionTime = now
+			conditionFound = true
+		}
+		updatedConditions = append(updatedConditions, condition)
+	}
+
+	if !conditionFound {
+		newCondition := metav1.Condition{
+			Type:               conditionType,
+			Status:             conditionStatus,
+			Reason:             conditionReason,
+			Message:            conditionMessage,
+			LastTransitionTime: now,
+		}
+		updatedConditions = append(updatedConditions, newCondition)
+	}
+	user.Status.Conditions = updatedConditions
+
+	logger.Info("Updating status", "phase", user.Status.Phase, "expiry", user.Status.ExpiryTime, "message", user.Status.Message)
+	err = r.Status().Update(ctx, user)
+	if err != nil {
+		logger.Error(err, "Failed to update user status")
+		return err
+	}
+	logger.Info("Successfully updated user status")
 	return nil
 }
 
@@ -548,6 +723,25 @@ func (r *UserReconciler) ensureCertKubeconfig(ctx context.Context, user *authv1a
 		base64.StdEncoding.EncodeToString(keyPEM),
 		username)
 
+	// 9.5. Extract certificate expiry time
+	logger := logf.FromContext(ctx)
+	logger.Info("Extracting certificate expiry", "certLength", len(signedCert))
+	logger.Info("Certificate data preview", "first20bytes", string(signedCert[:min(20, len(signedCert))]))
+
+	// Try to extract certificate expiry with proper format detection
+	certExpiryTime, err := r.extractCertificateExpiryWithFormatDetection(signedCert)
+	if err != nil {
+		return false, fmt.Errorf("failed to extract certificate expiry: %w", err)
+	}
+	logger.Info("Successfully extracted certificate expiry", "expiry", certExpiryTime)
+
+	// Update user status with actual certificate expiry
+	user.Status.ExpiryTime = certExpiryTime.Format(time.RFC3339)
+	user.Status.CertificateExpiry = "Certificate"
+	if err := r.Status().Update(ctx, user); err != nil {
+		return false, fmt.Errorf("failed to update user status with certificate expiry: %w", err)
+	}
+
 	// 10. Save kubeconfig
 	cfgSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: cfgSecretName, Namespace: kubeUserNamespace},
@@ -610,7 +804,127 @@ users:
 `, caDataB64, apiServer, username, username, username, username, certDataB64, keyDataB64))
 }
 
+// extractCertificateExpiryWithFormatDetection tries multiple formats to extract certificate expiry
+func (r *UserReconciler) extractCertificateExpiryWithFormatDetection(certData []byte) (time.Time, error) {
+	// Method 1: Try as base64-encoded PEM (most likely)
+	if time, err := r.tryBase64PEM(certData); err == nil {
+		return time, nil
+	}
+
+	// Method 2: Try as raw PEM (less likely)
+	if time, err := r.tryRawPEM(certData); err == nil {
+		return time, nil
+	}
+
+	// Method 3: Try as raw DER (least likely)
+	if time, err := r.tryRawDER(certData); err == nil {
+		return time, nil
+	}
+
+	return time.Time{}, errors.New("unable to parse certificate in any known format")
+}
+
+// tryBase64PEM tries to parse as base64-encoded PEM
+func (r *UserReconciler) tryBase64PEM(certData []byte) (time.Time, error) {
+	// Decode base64
+	certPEM, err := base64.StdEncoding.DecodeString(string(certData))
+	if err != nil {
+		return time.Time{}, fmt.Errorf("base64 decode failed: %w", err)
+	}
+
+	// Decode PEM to get DER
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return time.Time{}, errors.New("PEM decode failed")
+	}
+
+	// Parse certificate
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("certificate parse failed: %w", err)
+	}
+
+	return cert.NotAfter, nil
+}
+
+// tryRawPEM tries to parse as raw PEM data
+func (r *UserReconciler) tryRawPEM(certData []byte) (time.Time, error) {
+	// Decode PEM to get DER
+	block, _ := pem.Decode(certData)
+	if block == nil {
+		return time.Time{}, errors.New("PEM decode failed")
+	}
+
+	// Parse certificate
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("certificate parse failed: %w", err)
+	}
+
+	return cert.NotAfter, nil
+}
+
+// tryRawDER tries to parse as raw DER data
+func (r *UserReconciler) tryRawDER(certData []byte) (time.Time, error) {
+	// Parse certificate directly
+	cert, err := x509.ParseCertificate(certData)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("certificate parse failed: %w", err)
+	}
+
+	return cert.NotAfter, nil
+}
+
+// extractCertificateExpiryFromPEM extracts the NotAfter time from base64-encoded PEM certificate
+func (r *UserReconciler) extractCertificateExpiryFromPEM(certBase64 []byte) (time.Time, error) {
+	// First, decode the base64
+	certPEM, err := base64.StdEncoding.DecodeString(string(certBase64))
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to decode base64 certificate: %w", err)
+	}
+
+	// Then, decode the PEM to get DER
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return time.Time{}, errors.New("failed to decode PEM certificate")
+	}
+
+	// Finally, parse the certificate
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to parse certificate: %w", err)
+	}
+	return cert.NotAfter, nil
+}
+
+// extractCertificateExpiry extracts the NotAfter time from a certificate
+func (r *UserReconciler) extractCertificateExpiry(certDER []byte) (time.Time, error) {
+	cert, err := x509.ParseCertificate(certDER)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to parse certificate: %w", err)
+	}
+	return cert.NotAfter, nil
+}
+
+// calculateExpiry calculates expiry time based on user spec
+func (r *UserReconciler) calculateExpiry(user *authv1alpha1.User) time.Time {
+	expiry := time.Now().Add(defaultExpiry)
+	if user.Spec.Expiry != "" {
+		if d, err := time.ParseDuration(user.Spec.Expiry); err == nil {
+			expiry = time.Now().Add(d)
+		}
+	}
+	return expiry
+}
+
 // --- utils ---
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func containsString(slice []string, s string) bool {
 	for _, item := range slice {
 		if item == s {
