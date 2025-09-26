@@ -1,0 +1,10 @@
+apiVersion: auth.openkube.io/v1alpha1
+kind: User
+metadata:
+  name: jane
+spec:
+  roles:
+    - namespace: dev
+      existingRole: tester
+  clusterRoles:
+    - existingClusterRole: view
