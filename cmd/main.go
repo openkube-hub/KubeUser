@@ -36,7 +36,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	authv1alpha1 "github.com/openkube-hub/KubeUser/api/v1alpha1"
+	"github.com/openkube-hub/KubeUser/internal/certs"
 	"github.com/openkube-hub/KubeUser/internal/controller"
+	webhookpkg "github.com/openkube-hub/KubeUser/internal/webhook"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -102,19 +104,22 @@ func main() {
 		tlsOpts = append(tlsOpts, disableHTTP2)
 	}
 
+	// Setup certificate manager for webhook certificates
+	certManager := certs.NewManager(webhookCertPath, webhookCertName, webhookCertKey, "webhook-service", "kubeuser")
+
+	// Ensure certificates exist before creating webhook server
+	if err := certManager.EnsureCertificates(); err != nil {
+		setupLog.Error(err, "failed to ensure webhook certificates")
+		os.Exit(1)
+	}
+
 	// Initial webhook TLS options
 	webhookTLSOpts := tlsOpts
 	webhookServerOptions := webhook.Options{
-		TLSOpts: webhookTLSOpts,
-	}
-
-	if len(webhookCertPath) > 0 {
-		setupLog.Info("Initializing webhook certificate watcher using provided certificates",
-			"webhook-cert-path", webhookCertPath, "webhook-cert-name", webhookCertName, "webhook-cert-key", webhookCertKey)
-
-		webhookServerOptions.CertDir = webhookCertPath
-		webhookServerOptions.CertName = webhookCertName
-		webhookServerOptions.KeyName = webhookCertKey
+		TLSOpts:  webhookTLSOpts,
+		CertDir:  certManager.CertDir,
+		CertName: certManager.CertName,
+		KeyName:  certManager.KeyName,
 	}
 
 	webhookServer := webhook.NewServer(webhookServerOptions)
@@ -183,6 +188,18 @@ func main() {
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "User")
+		os.Exit(1)
+	}
+
+	// Setup webhook for User validation
+	if err := (&webhookpkg.UserWebhook{}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create webhook", "webhook", "User")
+		os.Exit(1)
+	}
+
+	// Setup certificate manager for automatic renewal
+	if err := certManager.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to setup certificate manager")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
