@@ -1,0 +1,118 @@
+# Example values for KubeUser Helm chart
+# This file demonstrates various configuration options following user preferences
+
+# Global settings
+global:
+  namespace: kubeuser
+  environment: production
+  nameSuffix: ""
+
+# Image configuration
+image:
+  repository: kubeuser-controller
+  pullPolicy: IfNotPresent
+  tag: "v0.2.0"
+
+# Deployment configuration
+replicaCount: 2
+
+# Resource configuration for production
+resources:
+  limits:
+    cpu: 1000m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 3000
+  fsGroup: 2000
+  seccompProfile:
+    type: RuntimeDefault
+
+# Webhook configuration
+webhook:
+  enabled: true
+  port: 9443
+  service:
+    type: ClusterIP
+    port: 443
+    targetPort: 9443
+
+# Metrics configuration
+metrics:
+  enabled: true
+  service:
+    type: ClusterIP
+    port: 8080
+
+# ConfigMap configuration
+configMap:
+  name: kubeuser-config
+  data:
+    controller_manager_config.yaml: |
+      health:
+        healthProbeBindAddress: :8081
+      metrics:
+        bindAddress: 127.0.0.1:8080
+      webhook:
+        port: 9443
+      leaderElection:
+        leaderElect: true
+        resourceName: kubeuser-leader
+
+# Environment variables
+env:
+  KUBERNETES_API_SERVER: "https://kubernetes.default.svc"
+  LOG_LEVEL: "info"
+  WEBHOOK_CERT_DIR: "/tmp/k8s-webhook-server/serving-certs"
+
+# Common labels (following user preference)
+commonLabels:
+  environment: test
+  team: platform
+  project: kubeuser
+
+# Node selection and scheduling
+nodeSelector:
+  kubernetes.io/os: linux
+
+tolerations:
+- key: "node-role.kubernetes.io/control-plane"
+  operator: "Exists"
+  effect: "NoSchedule"
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - kubeuser
+        topologyKey: kubernetes.io/hostname
+
+# Monitoring and observability
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    additionalLabels:
+      prometheus: "main"
+    namespace: "monitoring"
+
+# Network policy
+networkPolicy:
+  enabled: true
+
+# Pod disruption budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1

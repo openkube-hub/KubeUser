@@ -1,0 +1,118 @@
+# Default values for kubeuser.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# Global settings
+global:
+  # Namespace configuration
+  namespace: kubeuser
+  environment: test
+  nameSuffix: ""
+
+# Image configuration
+image:
+  repository: controller
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+# Image pull secrets
+imagePullSecrets: []
+
+# Service Account configuration
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Pod annotations and labels
+podAnnotations: {}
+podLabels: {}
+
+# Pod security context
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+# Container security context
+securityContext:
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - "ALL"
+
+# Deployment configuration
+replicaCount: 1
+
+# Resource limits and requests
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+# Liveness and readiness probes
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 8081
+  initialDelaySeconds: 15
+  periodSeconds: 20
+
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: 8081
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+# Node selector, tolerations, and affinity
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Manager configuration
+manager:
+  args:
+    - --leader-elect
+    - --health-probe-bind-address=:8081
+    - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
+
+# Webhook configuration
+webhook:
+  enabled: true
+  certPath: /tmp/k8s-webhook-server/serving-certs
+  # Fail = block requests if webhook fails (production)
+  # Ignore = allow requests if webhook fails (for testing)
+  failurePolicy: Fail
+  service:
+    type: ClusterIP
+    port: 443
+    targetPort: 9443
+
+# Metrics configuration
+metrics:
+  enabled: true
+  service:
+    type: ClusterIP
+    port: 8080
+
+# Environment variables
+env:
+  KUBERNETES_API_SERVER: "https://kubernetes.default.svc"
+
+# RBAC configuration
+rbac:
+  create: true
+  
+# CRD configuration
+crds:
+  install: true
+
+# Common labels (following user preference)
+commonLabels:
+  environment: test
+

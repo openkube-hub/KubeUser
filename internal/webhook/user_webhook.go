@@ -29,7 +29,7 @@ type UserWebhook struct {
 	decoder admission.Decoder
 }
 
-// +kubebuilder:webhook:path=/validate-auth-openkube-io-v1alpha1-user,mutating=false,failurePolicy=fail,sideEffects=None,groups=auth.openkube.io,resources=users,verbs=create;update,versions=v1alpha1,name=vuser.auth.openkube.io,admissionReviewVersions=v1
+// +kubebuilder:webhook:path=/validate-auth-openkube-io-v1alpha1-user,mutating=false,failurePolicy=fail,sideEffects=None,groups=auth.openkube.io,resources=users,verbs=create;update,versions=v1alpha1,name=user.auth.openkube.io,admissionReviewVersions=v1
 
 func (w *UserWebhook) Handle(ctx context.Context, req admission.Request) admission.Response {
 	logger := logf.FromContext(ctx).WithName("user-webhook")

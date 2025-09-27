@@ -1,0 +1,113 @@
+{{- if .Values.webhook.enabled }}
+---
+# Job to create self-signed certificates and patch webhook configuration
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "kubeuser.fullname" . }}-webhook-certs
+  namespace: {{ include "kubeuser.namespace" . }}
+  labels:
+    {{- include "kubeuser.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  template:
+    metadata:
+      name: webhook-certs
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "kubeuser.serviceAccountName" . }}
+      volumes:
+      - name: work-dir
+        emptyDir: {}
+      containers:
+      - name: create-certs
+        image: bitnami/kubectl:latest
+        workingDir: /tmp
+        volumeMounts:
+        - name: work-dir
+          mountPath: /tmp
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          
+          cd /tmp
+          SERVICE_NAME="{{ include "kubeuser.fullname" . }}-webhook-service"
+          NAMESPACE="{{ include "kubeuser.namespace" . }}"
+          
+          echo "Waiting for webhook service to be ready..."
+          kubectl wait --for=condition=available --timeout=300s deployment/{{ include "kubeuser.fullname" . }}-controller-manager -n ${NAMESPACE} || true
+          
+          echo "Extracting self-signed certificate from running webhook..."
+          # Wait for service to be accessible
+          for i in {1..30}; do
+            if kubectl get service ${SERVICE_NAME} -n ${NAMESPACE} >/dev/null 2>&1; then
+              echo "Service is ready"
+              break
+            fi
+            echo "Waiting for service... ($i/30)"
+            sleep 2
+          done
+          
+          # Extract the certificate
+          echo "Extracting certificate using openssl..."
+          timeout 60s sh -c "until echo | openssl s_client -connect ${SERVICE_NAME}.${NAMESPACE}.svc.cluster.local:443 -servername ${SERVICE_NAME}.${NAMESPACE}.svc.cluster.local 2>/dev/null; do sleep 2; done" | openssl x509 -outform PEM > webhook-ca.crt
+          
+          if [ ! -s webhook-ca.crt ]; then
+            echo "Failed to extract certificate from service, trying alternative method..."
+            SERVICE_IP=$(kubectl get service ${SERVICE_NAME} -n ${NAMESPACE} -o jsonpath='{.spec.clusterIP}')
+            echo | timeout 30s openssl s_client -connect $SERVICE_IP:443 2>/dev/null | openssl x509 -outform PEM > webhook-ca.crt || true
+          fi
+          
+          if [ ! -s webhook-ca.crt ]; then
+            echo "Could not extract certificate, webhook may not be ready yet"
+            echo "Setting webhook failurePolicy to Ignore to allow operation"
+            kubectl patch validatingwebhookconfiguration {{ include "kubeuser.fullname" . }}-validating-webhook-configuration \
+              --type='json' \
+              -p='[{"op": "replace", "path": "/webhooks/0/failurePolicy", "value": "Ignore"}]'
+            exit 0
+          fi
+          
+          echo "Successfully extracted certificate, patching webhook configuration..."
+          CA_BUNDLE=$(cat webhook-ca.crt | base64 | tr -d '\n')
+          
+          kubectl patch validatingwebhookconfiguration {{ include "kubeuser.fullname" . }}-validating-webhook-configuration \
+            --type='json' \
+            -p="[{\"op\": \"add\", \"path\": \"/webhooks/0/clientConfig/caBundle\", \"value\": \"$CA_BUNDLE\"}]"
+          
+          echo "Webhook certificate configuration completed successfully!"
+---
+# ValidatingWebhookConfiguration (will be patched by the job above)
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: {{ include "kubeuser.fullname" . }}-validating-webhook-configuration
+  labels:
+    {{- include "kubeuser.labels" . | nindent 4 }}
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: {{ include "kubeuser.fullname" . }}-webhook-service
+      namespace: {{ include "kubeuser.namespace" . }}
+      path: /validate-auth-openkube-io-v1alpha1-user
+    # caBundle will be added by the patch job
+  failurePolicy: {{ .Values.webhook.failurePolicy | default "Fail" }}
+  name: user.auth.openkube.io
+  rules:
+  - apiGroups:
+    - auth.openkube.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - users
+  sideEffects: None
+{{- end }}
