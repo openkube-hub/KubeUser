@@ -2,11 +2,15 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
+# Override the name of the chart
+nameOverride: ""
+# Override the full name of the chart
+fullnameOverride: ""
+
 # Global settings
 global:
   # Namespace configuration
   namespace: kubeuser
-  environment: test
   nameSuffix: ""
 
 # Image configuration

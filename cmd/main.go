@@ -104,12 +104,12 @@ func main() {
 		tlsOpts = append(tlsOpts, disableHTTP2)
 	}
 
-// Setup certificate manager for webhook certificates
-webhookServiceName := os.Getenv("WEBHOOK_SERVICE_NAME")
-if webhookServiceName == "" {
-	webhookServiceName = "webhook-service" // fallback
-}
-certManager := certs.NewManager(webhookCertPath, webhookCertName, webhookCertKey, webhookServiceName, "kubeuser")
+	// Setup certificate manager for webhook certificates
+	webhookServiceName := os.Getenv("WEBHOOK_SERVICE_NAME")
+	if webhookServiceName == "" {
+		webhookServiceName = "webhook-service" // fallback
+	}
+	certManager := certs.NewManager(webhookCertPath, webhookCertName, webhookCertKey, webhookServiceName, "kubeuser")
 
 	// Ensure certificates exist before creating webhook server
 	if err := certManager.EnsureCertificates(); err != nil {

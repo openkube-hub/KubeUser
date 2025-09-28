@@ -77,17 +77,11 @@ spec:
           name: webhook-certs
         - mountPath: /tmp
           name: tmp-dir
-        {{- with .Values.volumeMounts }}
-          {{- toYaml . | nindent 8 }}
-        {{- end }}
       volumes:
       - name: webhook-certs
         emptyDir: {}
       - name: tmp-dir
         emptyDir: {}
-      {{- with .Values.volumes }}
-        {{- toYaml . | nindent 6 }}
-      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
