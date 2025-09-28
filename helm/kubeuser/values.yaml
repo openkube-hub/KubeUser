@@ -47,7 +47,7 @@ securityContext:
     - "ALL"
 
 # Deployment configuration
-replicaCount: 1
+replicaCount: 2
 
 # Resource limits and requests
 resources:
