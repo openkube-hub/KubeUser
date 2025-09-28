@@ -1,0 +1,174 @@
+# Example values for KubeUser Helm chart
+# This file demonstrates various configuration options with production-ready examples
+# Only includes fields that are actually implemented in the Helm templates
+
+# Override the name of the chart (optional)
+nameOverride: ""
+# Override the full name of the chart (optional)
+fullnameOverride: ""
+
+# Global settings
+global:
+  namespace: kubeuser-prod
+  nameSuffix: "-prod"
+
+# Image configuration
+image:
+  repository: kubeuser/controller
+  pullPolicy: IfNotPresent
+  tag: "v1.0.0"
+
+# Image pull secrets (for private registries)
+imagePullSecrets:
+- name: my-registry-secret
+
+# Service Account configuration
+serviceAccount:
+  create: true
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789:role/kubeuser-role"
+  name: "kubeuser-sa"
+
+# Pod annotations and labels
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+podLabels:
+  version: "v1.0.0"
+  component: "controller"
+
+# Pod security context (pod-level security)
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 3000
+  fsGroup: 2000
+  seccompProfile:
+    type: RuntimeDefault
+
+# Container security context (container-level security)
+securityContext:
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  runAsUser: 1000
+  runAsGroup: 3000
+  capabilities:
+    drop:
+    - "ALL"
+
+# Deployment configuration
+replicaCount: 2
+
+# Resource limits and requests (production values)
+resources:
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Health check probes
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 8081
+  initialDelaySeconds: 30
+  periodSeconds: 30
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: 8081
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+  successThreshold: 1
+  failureThreshold: 3
+
+# Node selection and scheduling
+nodeSelector:
+  kubernetes.io/os: linux
+  node-role.kubernetes.io/worker: "true"
+
+# Tolerations for scheduling
+tolerances:
+- key: "node-role.kubernetes.io/control-plane"
+  operator: "Exists"
+  effect: "NoSchedule"
+- key: "dedicated"
+  operator: "Equal"
+  value: "kubeuser"
+  effect: "NoSchedule"
+
+# Pod affinity/anti-affinity
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: kubeuser
+        topologyKey: kubernetes.io/hostname
+  nodeAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 50
+      preference:
+        matchExpressions:
+        - key: node-type
+          operator: In
+          values:
+          - "compute"
+
+# Manager configuration
+manager:
+  args:
+    - --leader-elect
+    - --health-probe-bind-address=:8081
+    - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
+    - --log-level=info
+    - --metrics-bind-address=:8080
+
+# Webhook configuration
+webhook:
+  enabled: true
+  certPath: /tmp/k8s-webhook-server/serving-certs
+  # Production: Fail (block requests if webhook fails)
+  # Development: Ignore (allow requests if webhook fails)
+  failurePolicy: Fail
+  service:
+    type: ClusterIP
+    port: 443
+    targetPort: 9443
+
+# Metrics configuration
+metrics:
+  enabled: true
+  service:
+    type: ClusterIP
+    port: 8080
+
+# Environment variables
+env:
+  KUBERNETES_API_SERVER: "https://kubernetes.default.svc"
+  LOG_LEVEL: "info"
+  ENABLE_PROFILING: "false"
+  METRICS_ADDR: ":8080"
+
+# RBAC configuration
+rbac:
+  create: true
+
+# CRD configuration
+crds:
+  install: true
+
+# Common labels applied to all resources
+commonLabels:
+  environment: production
+  team: platform
+  project: kubeuser
+  version: "v1.0.0"
