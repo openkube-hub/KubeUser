@@ -105,6 +105,6 @@ spec:
       - name: cert
         secret:
           defaultMode: 420
-          secretName: kubeuser-webhook-certs
+          secretName: webhook-certs
       serviceAccountName: controller-manager
       terminationGracePeriodSeconds: 10

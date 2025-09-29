@@ -1,0 +1,42 @@
+---
+# Self-signed issuer for webhook certificates
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: webhook-issuer
+  namespace: system
+spec:
+  selfSigned: {}
+---
+# Certificate for webhook server
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: webhook-cert
+  namespace: system
+spec:
+  # Secret name that will be created and mounted by the deployment
+  secretName: webhook-certs
+  issuerRef:
+    name: webhook-issuer
+    kind: Issuer
+  # Common name (kustomization will prefix this with namePrefix)
+  commonName: webhook-service.system.svc.cluster.local
+  # DNS names that the certificate should be valid for (kustomization will handle prefixes)
+  dnsNames:
+  - webhook-service
+  - webhook-service.system
+  - webhook-service.system.svc
+  - webhook-service.system.svc.cluster.local
+  # Duration and renewal
+  duration: 8760h # 1 year
+  renewBefore: 2160h # 90 days before expiry
+  # Key algorithm and size
+  privateKey:
+    algorithm: RSA
+    size: 2048
+  # Usage
+  usages:
+  - digital signature
+  - key encipherment
+  - server auth

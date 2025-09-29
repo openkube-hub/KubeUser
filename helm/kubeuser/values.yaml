@@ -92,12 +92,16 @@ webhook:
   # Fail = block requests if webhook fails (production)
   # Ignore = allow requests if webhook fails (for testing)
   failurePolicy: Fail
+  # cert-manager configuration for webhook certificates
+  certManager:
+    # Duration for webhook certificates
+    duration: 8760h # 1 year
+    # Renew certificates this much time before expiry
+    renewBefore: 2160h # 90 days
   service:
     type: ClusterIP
     port: 443
     targetPort: 9443
-
-# Metrics configuration
 metrics:
   enabled: true
   service:
