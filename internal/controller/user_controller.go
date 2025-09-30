@@ -40,6 +40,11 @@ const (
 	inClusterCAPath   = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 
 	userFinalizer = "auth.openkube.io/finalizer"
+
+	// Phase constants to avoid goconst issues
+	PhaseError   = "Error"
+	PhaseExpired = "Expired"
+	PhaseReady   = "Ready"
 )
 
 // UserReconciler reconciles a User object
@@ -90,15 +95,12 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 
 	// Handle deletion
-	logger.Info("Checking deletion", "deletionTimestamp", user.ObjectMeta.DeletionTimestamp)
-	if !user.ObjectMeta.DeletionTimestamp.IsZero() {
+	logger.Info("Checking deletion", "deletionTimestamp", user.DeletionTimestamp)
+	if !user.DeletionTimestamp.IsZero() {
 		logger.Info("User is being deleted, starting cleanup")
 		if containsString(user.Finalizers, userFinalizer) {
 			logger.Info("Cleaning up user resources")
-			if err := r.cleanupUserResources(ctx, &user); err != nil {
-				logger.Error(err, "Failed to cleanup user resources")
-				return ctrl.Result{}, err
-			}
+			r.cleanupUserResources(ctx, &user)
 			logger.Info("Removing finalizer")
 			user.Finalizers = removeString(user.Finalizers, userFinalizer)
 			if err := r.Update(ctx, &user); err != nil {
@@ -152,7 +154,7 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	logger.Info("Starting RoleBindings reconciliation", "rolesCount", len(user.Spec.Roles))
 	if err := r.reconcileRoleBindings(ctx, &user); err != nil {
 		logger.Error(err, "Failed to reconcile RoleBindings")
-		user.Status.Phase = "Error"
+		user.Status.Phase = PhaseError
 		user.Status.Message = fmt.Sprintf("Failed to reconcile RoleBindings: %v", err)
 		_ = r.Status().Update(ctx, &user)
 		return ctrl.Result{}, err
@@ -163,7 +165,7 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	logger.Info("Starting ClusterRoleBindings reconciliation", "clusterRolesCount", len(user.Spec.ClusterRoles))
 	if err := r.reconcileClusterRoleBindings(ctx, &user); err != nil {
 		logger.Error(err, "Failed to reconcile ClusterRoleBindings")
-		user.Status.Phase = "Error"
+		user.Status.Phase = PhaseError
 		user.Status.Message = fmt.Sprintf("Failed to reconcile ClusterRoleBindings: %v", err)
 		_ = r.Status().Update(ctx, &user)
 		return ctrl.Result{}, err
@@ -203,7 +205,7 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 			if timeUntilExpiry <= 0 {
 				// User has expired, mark as expired
 				logger.Info("User has expired, updating status")
-				user.Status.Phase = "Expired"
+				user.Status.Phase = PhaseExpired
 				user.Status.Message = "User access has expired"
 				_ = r.Status().Update(ctx, &user)
 				logger.Info("=== END RECONCILE (EXPIRED) ===")
@@ -263,7 +265,7 @@ func (r *UserReconciler) createOrUpdate(ctx context.Context, obj client.Object) 
 }
 
 // cleanupUserResources deletes all resources related to the user.
-func (r *UserReconciler) cleanupUserResources(ctx context.Context, user *authv1alpha1.User) error {
+func (r *UserReconciler) cleanupUserResources(ctx context.Context, user *authv1alpha1.User) {
 	username := user.Name
 
 	// Delete fixed resources
@@ -293,7 +295,6 @@ func (r *UserReconciler) cleanupUserResources(ctx context.Context, user *authv1a
 		}
 	}
 
-	return nil
 }
 
 // updateUserStatus calculates and updates the user status based on current state
@@ -321,7 +322,7 @@ func (r *UserReconciler) updateUserStatus(ctx context.Context, user *authv1alpha
 
 	// Check if user has expired
 	if time.Now().After(expiry) {
-		user.Status.Phase = "Expired"
+		user.Status.Phase = PhaseExpired
 		user.Status.Message = "User access has expired"
 	} else {
 		// User is active
@@ -332,36 +333,33 @@ func (r *UserReconciler) updateUserStatus(ctx context.Context, user *authv1alpha
 
 		if totalRoles == 0 {
 			user.Status.Message = "User has no assigned roles"
+		} else if roleCount > 0 && clusterRoleCount > 0 {
+			user.Status.Message = fmt.Sprintf("User provisioned with %d namespace role(s) and %d cluster role(s)", roleCount, clusterRoleCount)
+		} else if roleCount > 0 {
+			user.Status.Message = fmt.Sprintf("User provisioned with %d namespace role(s)", roleCount)
 		} else {
-			msg := fmt.Sprintf("User provisioned with %d role(s)", totalRoles)
-			if roleCount > 0 && clusterRoleCount > 0 {
-				msg = fmt.Sprintf("User provisioned with %d namespace role(s) and %d cluster role(s)", roleCount, clusterRoleCount)
-			} else if roleCount > 0 {
-				msg = fmt.Sprintf("User provisioned with %d namespace role(s)", roleCount)
-			} else {
-				msg = fmt.Sprintf("User provisioned with %d cluster role(s)", clusterRoleCount)
-			}
-			user.Status.Message = msg
+			user.Status.Message = fmt.Sprintf("User provisioned with %d cluster role(s)", clusterRoleCount)
 		}
 	}
 
 	// Add condition for better status tracking
 	now := metav1.NewTime(time.Now())
-	conditionType := "Ready"
+	conditionType := PhaseReady
 	conditionStatus := metav1.ConditionTrue
 	conditionReason := "UserProvisioned"
 	conditionMessage := user.Status.Message
 
-	if user.Status.Phase == "Error" {
-		conditionType = "Ready"
+	switch user.Status.Phase {
+	case "Error":
+		conditionType = PhaseReady
 		conditionStatus = metav1.ConditionFalse
 		conditionReason = "ProvisioningFailed"
-	} else if user.Status.Phase == "Expired" {
-		conditionType = "Ready"
+	case "Expired":
+		conditionType = PhaseReady
 		conditionStatus = metav1.ConditionFalse
 		conditionReason = "UserExpired"
-	} else if user.Status.Phase == "Pending" {
-		conditionType = "Ready"
+	case "Pending":
+		conditionType = PhaseReady
 		conditionStatus = metav1.ConditionFalse
 		conditionReason = "Provisioning"
 	}
@@ -634,7 +632,7 @@ func (r *UserReconciler) ensureCertKubeconfig(ctx context.Context, user *authv1a
 		// Clean up existing resources for rotation
 		logger := logf.FromContext(ctx)
 		logger.Info("Certificate needs rotation, cleaning up existing resources", "user", username)
-		if err := r.cleanupCertificateResources(ctx, keySecretName, cfgSecretName, csrName); err != nil {
+		if err := r.cleanupCertificateResources(ctx, cfgSecretName, csrName); err != nil {
 			return false, fmt.Errorf("failed to cleanup certificate resources: %w", err)
 		}
 	}
@@ -824,18 +822,18 @@ users:
 // extractCertificateExpiryWithFormatDetection tries multiple formats to extract certificate expiry
 func (r *UserReconciler) extractCertificateExpiryWithFormatDetection(certData []byte) (time.Time, error) {
 	// Method 1: Try as base64-encoded PEM (most likely)
-	if time, err := r.tryBase64PEM(certData); err == nil {
-		return time, nil
+	if certTime, err := r.tryBase64PEM(certData); err == nil {
+		return certTime, nil
 	}
 
 	// Method 2: Try as raw PEM (less likely)
-	if time, err := r.tryRawPEM(certData); err == nil {
-		return time, nil
+	if certTime, err := r.tryRawPEM(certData); err == nil {
+		return certTime, nil
 	}
 
 	// Method 3: Try as raw DER (least likely)
-	if time, err := r.tryRawDER(certData); err == nil {
-		return time, nil
+	if certTime, err := r.tryRawDER(certData); err == nil {
+		return certTime, nil
 	}
 
 	return time.Time{}, errors.New("unable to parse certificate in any known format")
@@ -892,37 +890,6 @@ func (r *UserReconciler) tryRawDER(certData []byte) (time.Time, error) {
 	return cert.NotAfter, nil
 }
 
-// extractCertificateExpiryFromPEM extracts the NotAfter time from base64-encoded PEM certificate
-func (r *UserReconciler) extractCertificateExpiryFromPEM(certBase64 []byte) (time.Time, error) {
-	// First, decode the base64
-	certPEM, err := base64.StdEncoding.DecodeString(string(certBase64))
-	if err != nil {
-		return time.Time{}, fmt.Errorf("failed to decode base64 certificate: %w", err)
-	}
-
-	// Then, decode the PEM to get DER
-	block, _ := pem.Decode(certPEM)
-	if block == nil {
-		return time.Time{}, errors.New("failed to decode PEM certificate")
-	}
-
-	// Finally, parse the certificate
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("failed to parse certificate: %w", err)
-	}
-	return cert.NotAfter, nil
-}
-
-// extractCertificateExpiry extracts the NotAfter time from a certificate
-func (r *UserReconciler) extractCertificateExpiry(certDER []byte) (time.Time, error) {
-	cert, err := x509.ParseCertificate(certDER)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("failed to parse certificate: %w", err)
-	}
-	return cert.NotAfter, nil
-}
-
 // calculateExpiry calculates expiry time based on user spec
 func (r *UserReconciler) calculateExpiry(user *authv1alpha1.User) time.Time {
 	expiry := time.Now().Add(defaultExpiry)
@@ -963,7 +930,7 @@ func (r *UserReconciler) checkCertificateRotation(ctx context.Context, cfgSecret
 	}
 
 	// Check if certificate is expiring soon
-	timeUntilExpiry := certExpiry.Sub(time.Now())
+	timeUntilExpiry := time.Until(certExpiry)
 	return timeUntilExpiry < rotationThreshold, nil
 }
 
@@ -987,7 +954,7 @@ func (r *UserReconciler) extractClientCertFromKubeconfig(kubeconfigData []byte) 
 }
 
 // cleanupCertificateResources removes existing certificate resources for rotation
-func (r *UserReconciler) cleanupCertificateResources(ctx context.Context, keySecretName, cfgSecretName, csrName string) error {
+func (r *UserReconciler) cleanupCertificateResources(ctx context.Context, cfgSecretName, csrName string) error {
 	logger := logf.FromContext(ctx)
 
 	// Delete kubeconfig secret
