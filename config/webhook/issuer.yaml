@@ -18,16 +18,20 @@ spec:
   # Secret name that will be created and mounted by the deployment
   secretName: webhook-certs
   issuerRef:
-    name: webhook-issuer
+    name: kubeuser-webhook-issuer
     kind: Issuer
   # Common name (kustomization will prefix this with namePrefix)
-  commonName: webhook-service.system.svc.cluster.local
+  commonName: kubeuser-webhook-service.kubeuser.svc.cluster.local
   # DNS names that the certificate should be valid for (kustomization will handle prefixes)
   dnsNames:
-  - webhook-service
-  - webhook-service.system
-  - webhook-service.system.svc
-  - webhook-service.system.svc.cluster.local
+  - kubeuser-webhook-service
+  - kubeuser-webhook-service.kubeuser
+  - kubeuser-webhook-service.kubeuser.svc
+  - kubeuser-webhook-service.kubeuser.svc.cluster.local
+  - kubeuser-kubeuser-webhook-service
+  - kubeuser-kubeuser-webhook-service.kubeuser
+  - kubeuser-kubeuser-webhook-service.kubeuser.svc
+  - kubeuser-kubeuser-webhook-service.kubeuser.svc.cluster.local
   # Duration and renewal
   duration: 8760h # 1 year
   renewBefore: 2160h # 90 days before expiry

@@ -33,4 +33,9 @@ go.work.sum
 bin/
 
 # Generated certificates (for local development)
-# certs/
+certs/
+*.crt
+*.key
+*.pem
+*.p12
+*.pfx

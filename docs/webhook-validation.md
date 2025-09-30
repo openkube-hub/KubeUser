@@ -21,11 +21,23 @@ The KubeUser operator includes an admission webhook that validates User resource
 
 ## Certificate Management
 
+### Webhook Certificates
+
 The webhook uses cert-manager for automatic certificate provisioning and management:
 
 - **Self-signed issuer**: A self-signed Certificate Authority is created for the webhook
-- **Automatic renewal**: cert-manager handles certificate renewal automatically
+- **Automatic renewal**: cert-manager handles certificate renewal automatically (90 days before expiry)
 - **CA injection**: cert-manager automatically injects the CA bundle into the ValidatingAdmissionWebhook configuration
+- **RSA 2048-bit keys** with proper key usage for server authentication
+
+### Client Certificates
+
+Client certificates for user authentication are managed through the Kubernetes Certificate Signing Request (CSR) API:
+
+- **Kubernetes CSR API**: Uses the native `kubernetes.io/kube-apiserver-client` signer
+- **Automatic approval**: The controller automatically approves CSRs for managed users
+- **Certificate rotation**: Certificates are automatically rotated 30 days before expiry
+- **Secure storage**: Private keys and certificates are stored as Kubernetes secrets
 
 ## Prerequisites
 
@@ -81,11 +93,34 @@ kubectl apply -k config/default
 
 ## Troubleshooting
 
-### Certificate Issues
+### Webhook Certificate Issues
 Check that cert-manager is running and the certificate is ready:
 ```bash
 kubectl get certificates -n kubeuser-system
 kubectl get secrets kubeuser-webhook-certs -n kubeuser-system
+```
+
+### Client Certificate Issues
+Check CSR status and certificate secrets:
+```bash
+# Check CSRs for a specific user
+kubectl get csr -l auth.openkube.io/user=username
+
+# Check user certificate secrets
+kubectl get secrets -n kubeuser | grep username
+
+# Check certificate expiry from kubeconfig
+kubectl get secret username-kubeconfig -n kubeuser -o jsonpath='{.data.config}' | base64 -d | grep client-certificate-data | head -1 | awk '{print $2}' | base64 -d | openssl x509 -noout -dates
+```
+
+### Certificate Rotation Issues
+If certificates are not rotating automatically:
+```bash
+# Force certificate rotation by deleting the kubeconfig secret
+kubectl delete secret username-kubeconfig -n kubeuser
+
+# Trigger reconciliation
+kubectl annotate user username kubectl.kubernetes.io/restartedAt="$(date -Iseconds)"
 ```
 
 ### Webhook Logs

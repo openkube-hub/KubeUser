@@ -44,13 +44,13 @@ KubeUser follows the standard Kubernetes operator pattern:
 #### 🚧 Planned Features
 - [ ] Reconciliation Loop: Continuous monitoring and enforcement of user permissions
 - [X] Finalizers: Proper cleanup of user resources when User objects are deleted
-- [X] Certificate Management: Automatic generation of client certificates for users
+- [X] Certificate Management: Automatic generation of client certificates using Kubernetes CSR API
 - [X] Kubeconfig Generation: Creates ready-to-use kubeconfig files stored as secrets
 - [X] RBAC Integration: Creates RoleBindings and ClusterRoleBindings based on User spec
 - [X] Role Validation: Validates that referenced Roles and ClusterRoles exist
 - [ ] Status Reporting: Comprehensive status updates with conditions
-- [ ] **Webhook validation for User resources**
-- [ ] **Certificate rotation and renewal**
+- [X] **Webhook validation for User resources**
+- [X] **Certificate rotation and renewal** (30 days before expiry)
 - [ ] **Templated Roles**: Provide predefined reusable RBAC role templates for common use cases
 - [ ] Expiry Support: Time-based access control with configurable expiration
 - [ ] High availability: support for multi-replica deployments
@@ -65,9 +65,72 @@ KubeUser follows the standard Kubernetes operator pattern:
 
 ### Prerequisites
 
-- Kubernetes cluster (v1.28+)
-- kubectl configured to access your cluster
-- Cluster admin permissions
+- **Kubernetes cluster** (v1.28+)
+- **kubectl** configured to access your cluster with cluster-admin permissions
+- **cert-manager** (required for webhook certificates)
+- **Docker** (for building images locally)
+- **kind** or **minikube** (for local testing)
+
+#### Install cert-manager
+
+KubeUser requires cert-manager for webhook certificate management:
+
+```bash
+# Install cert-manager
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml
+
+# Wait for cert-manager to be ready
+kubectl wait --for=condition=ready pod -l app=cert-manager -n cert-manager --timeout=60s
+```
+
+### Deployment Options
+
+#### Option 1: Using Kustomize (Recommended)
+
+```bash
+# Clone the repository
+git clone https://github.com/openkube-hub/KubeUser.git
+cd KubeUser
+
+# Deploy using kustomize
+kubectl apply -k config/default
+
+# Wait for controller to be ready
+kubectl wait --for=condition=ready pod -l control-plane=controller-manager -n kubeuser --timeout=120s
+```
+
+#### Option 2: Local Development with kind
+
+For local testing and development:
+
+```bash
+# Build the Docker image
+make docker-build
+
+# Load image into kind cluster
+kind load docker-image controller:latest --name <your-cluster-name>
+
+# Deploy with local image
+kubectl apply -k config/default
+
+# Update deployment to use local image
+kubectl patch deployment kubeuser-controller-manager -n kubeuser -p '{"spec":{"template":{"spec":{"containers":[{"name":"manager","imagePullPolicy":"Never"}]}}}}'
+```
+
+### Verification
+
+Verify the installation:
+
+```bash
+# Check controller status
+kubectl get pods -n kubeuser
+
+# Check webhook certificate
+kubectl get certificates -n kubeuser
+
+# Check CRDs
+kubectl get crd users.auth.openkube.io
+```
 
 
 ## 🚀 Quick Start / Usage
@@ -156,6 +219,67 @@ kubectl --kubeconfig ~/tmp/kubeconfig get pods -n dev
 kubectl delete user jane
 ```
 
+### Comprehensive Testing
+
+For thorough testing of all features, use the provided test script:
+
+```bash
+# Run the comprehensive test suite
+./test-kubeuser.sh
+```
+
+This script tests:
+- Prerequisites validation
+- Controller deployment health
+- User creation and RBAC bindings
+- Certificate generation and kubeconfig creation
+- User access validation
+- Certificate rotation
+- Resource cleanup
+
+#### Manual Testing Steps
+
+1. **Setup test environment:**
+   ```bash
+   kubectl apply -f test/test-setup.yaml
+   ```
+
+2. **Create a test user:**
+   ```bash
+   kubectl apply -f test/test-user-jane-1.yaml
+   ```
+
+3. **Verify user creation:**
+   ```bash
+   kubectl get users
+   kubectl describe user jane
+   ```
+
+4. **Check generated resources:**
+   ```bash
+   # Check secrets
+   kubectl get secrets -n kubeuser | grep jane
+   
+   # Check RBAC bindings
+   kubectl get rolebindings -n dev | grep jane
+   kubectl get clusterrolebindings | grep jane
+   
+   # Check CSR (if still present)
+   kubectl get csr -l auth.openkube.io/user=jane
+   ```
+
+5. **Test user access:**
+   ```bash
+   # Extract kubeconfig
+   kubectl get secret jane-kubeconfig -n kubeuser -o jsonpath='{.data.config}' | base64 -d > /tmp/jane.kubeconfig
+   
+   # Test authentication
+   kubectl --kubeconfig /tmp/jane.kubeconfig auth can-i get pods -n dev
+   
+   # Test actual access
+   kubectl --kubeconfig /tmp/jane.kubeconfig get pods -n dev
+   ```
+
 ## ⚙️ Configuration
 
 ### Environment Variables
@@ -165,6 +289,129 @@ The operator supports the following environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `KUBERNETES_API_SERVER` | `https://kubernetes.default.svc` | Kubernetes api address |
+
+## 🔧 Troubleshooting
+
+### Common Issues
+
+#### Controller Pod Not Starting
+
+```bash
+# Check pod status
+kubectl get pods -n kubeuser
+
+# Check pod logs
+kubectl logs -n kubeuser deployment/kubeuser-controller-manager
+
+# Check events
+kubectl get events -n kubeuser --sort-by=.lastTimestamp
+```
+
+**Common causes:**
+- Missing cert-manager installation
+- Webhook certificate not ready
+- Image pull issues (for local development)
+
+#### Webhook Certificate Issues
+
+```bash
+# Check certificate status
+kubectl get certificates -n kubeuser
+kubectl describe certificate kubeuser-webhook-cert -n kubeuser
+
+# Check cert-manager logs
+kubectl logs -n cert-manager deployment/cert-manager
+
+# Force certificate recreation
+kubectl delete certificate kubeuser-webhook-cert -n kubeuser
+kubectl apply -k config/default
+```
+
+#### User Creation Fails
+
+```bash
+# Check user status
+kubectl describe user <username>
+
+# Check controller logs
+kubectl logs -n kubeuser deployment/kubeuser-controller-manager | grep -i error
+
+# Check webhook validation
+kubectl get validatingwebhookconfiguration kubeuser-validating-webhook-configuration -o yaml
+```
+
+**Common causes:**
+- Referenced roles don't exist
+- RBAC permission issues
+- Webhook validation failures
+
+#### Certificate Generation Issues
+
+```bash
+# Check CSR status
+kubectl get csr -l auth.openkube.io/user=<username>
+
+# Check CSR details
+kubectl describe csr <csr-name>
+
+# Check controller RBAC permissions
+kubectl auth can-i create certificatesigningrequests --as=system:serviceaccount:kubeuser:kubeuser-controller-manager
+```
+
+### Getting Help
+
+For additional support:
+1. Check the comprehensive documentation in `docs/`
+2. Review logs for specific error messages
+3. Ensure all prerequisites are properly installed
+4. Verify RBAC permissions are correctly configured
+
+## 📚 Documentation
+
+- [Certificate Management Guide](docs/certificate-management.md) - Comprehensive certificate management details
+- [Webhook Validation](docs/webhook-validation.md) - Webhook validation and troubleshooting
+- [Test Script](test-kubeuser.sh) - Automated testing script
+
+## 🚀 Quick Reference
+
+### Essential Commands
+
+```bash
+# Deploy KubeUser
+kubectl apply -k config/default
+
+# Check deployment status
+kubectl get pods -n kubeuser
+kubectl get certificates -n kubeuser
+
+# Create a user
+kubectl apply -f test/test-user-jane-1.yaml
+
+# Get user kubeconfig
+kubectl get secret jane-kubeconfig -n kubeuser -o jsonpath='{.data.config}' | base64 -d > jane.kubeconfig
+
+# Test user access
+kubectl --kubeconfig jane.kubeconfig auth can-i get pods -n dev
+
+# Clean up
+kubectl delete user jane
+kubectl delete -k config/default
+```
+
+### Key Resources Created
+
+- **Namespace**: `kubeuser`
+- **CRD**: `users.auth.openkube.io`
+- **Controller**: `kubeuser-controller-manager`
+- **Webhook**: `kubeuser-validating-webhook-configuration`
+- **Certificates**: `kubeuser-webhook-cert` (managed by cert-manager)
+
+### User Resource Secrets
+
+For each user, the controller creates:
+- `<username>-key`: Private key secret
+- `<username>-kubeconfig`: Complete kubeconfig file
+- CSR: `<username>-csr` (temporary, cleaned up after use)
 
 
 ## 💻 Development Guide

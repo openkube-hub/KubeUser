@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	authv1alpha1 "github.com/openkube-hub/KubeUser/api/v1alpha1"
@@ -622,9 +623,25 @@ func (r *UserReconciler) ensureCertKubeconfig(ctx context.Context, user *authv1a
 	cfgSecretName := fmt.Sprintf("%s-kubeconfig", username)
 	csrName := fmt.Sprintf("%s-csr", username)
 
+	// Check if certificate needs rotation (30 days before expiry)
+	rotationThreshold := 30 * 24 * time.Hour
+	needsRotation, err := r.checkCertificateRotation(ctx, cfgSecretName, rotationThreshold)
+	if err != nil {
+		return false, fmt.Errorf("failed to check certificate rotation: %w", err)
+	}
+
+	if needsRotation {
+		// Clean up existing resources for rotation
+		logger := logf.FromContext(ctx)
+		logger.Info("Certificate needs rotation, cleaning up existing resources", "user", username)
+		if err := r.cleanupCertificateResources(ctx, keySecretName, cfgSecretName, csrName); err != nil {
+			return false, fmt.Errorf("failed to cleanup certificate resources: %w", err)
+		}
+	}
+
 	// 1. Load/create key Secret
 	var keySecret corev1.Secret
-	err := r.Get(ctx, types.NamespacedName{Name: keySecretName, Namespace: kubeUserNamespace}, &keySecret)
+	err = r.Get(ctx, types.NamespacedName{Name: keySecretName, Namespace: kubeUserNamespace}, &keySecret)
 	var keyPEM []byte
 	if apierrors.IsNotFound(err) {
 		key, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -915,6 +932,87 @@ func (r *UserReconciler) calculateExpiry(user *authv1alpha1.User) time.Time {
 		}
 	}
 	return expiry
+}
+
+// checkCertificateRotation checks if a certificate needs rotation based on expiry
+func (r *UserReconciler) checkCertificateRotation(ctx context.Context, cfgSecretName string, rotationThreshold time.Duration) (bool, error) {
+	var existingCfg corev1.Secret
+	if err := r.Get(ctx, types.NamespacedName{Name: cfgSecretName, Namespace: kubeUserNamespace}, &existingCfg); err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, nil // No existing certificate, no rotation needed
+		}
+		return false, err
+	}
+
+	// Extract certificate from kubeconfig
+	kubeconfigData := existingCfg.Data["config"]
+	if kubeconfigData == nil {
+		return false, nil // No kubeconfig data, needs recreation
+	}
+
+	// Parse kubeconfig to extract client certificate
+	certData, err := r.extractClientCertFromKubeconfig(kubeconfigData)
+	if err != nil {
+		return false, fmt.Errorf("failed to extract certificate from kubeconfig: %w", err)
+	}
+
+	// Check certificate expiry
+	certExpiry, err := r.extractCertificateExpiryWithFormatDetection(certData)
+	if err != nil {
+		return false, fmt.Errorf("failed to extract certificate expiry: %w", err)
+	}
+
+	// Check if certificate is expiring soon
+	timeUntilExpiry := certExpiry.Sub(time.Now())
+	return timeUntilExpiry < rotationThreshold, nil
+}
+
+// extractClientCertFromKubeconfig extracts client certificate data from kubeconfig YAML
+func (r *UserReconciler) extractClientCertFromKubeconfig(kubeconfigData []byte) ([]byte, error) {
+	// Simple regex approach to extract client-certificate-data
+	// In a production environment, you might want to use a proper YAML parser
+	lines := strings.Split(string(kubeconfigData), "\n")
+	for _, line := range lines {
+		trimmedLine := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmedLine, "client-certificate-data:") {
+			parts := strings.SplitN(trimmedLine, ":", 2)
+			if len(parts) == 2 {
+				certData := strings.TrimSpace(parts[1])
+				// Return the base64 encoded certificate data as bytes
+				return []byte(certData), nil
+			}
+		}
+	}
+	return nil, errors.New("client certificate data not found in kubeconfig")
+}
+
+// cleanupCertificateResources removes existing certificate resources for rotation
+func (r *UserReconciler) cleanupCertificateResources(ctx context.Context, keySecretName, cfgSecretName, csrName string) error {
+	logger := logf.FromContext(ctx)
+
+	// Delete kubeconfig secret
+	kubeconfigSecret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: cfgSecretName, Namespace: kubeUserNamespace}, kubeconfigSecret); err == nil {
+		logger.Info("Deleting kubeconfig secret for rotation", "secret", cfgSecretName)
+		if err := r.Delete(ctx, kubeconfigSecret); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete kubeconfig secret: %w", err)
+		}
+	}
+
+	// Delete existing CSR
+	existingCSR := &certv1.CertificateSigningRequest{}
+	if err := r.Get(ctx, types.NamespacedName{Name: csrName}, existingCSR); err == nil {
+		logger.Info("Deleting existing CSR for rotation", "csr", csrName)
+		if err := r.Delete(ctx, existingCSR); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete existing CSR: %w", err)
+		}
+	}
+
+	// Optionally generate new private key for better security
+	// For now, we'll reuse the existing key to maintain consistency
+	// In a future enhancement, you might want to rotate keys as well
+
+	return nil
 }
 
 // --- utils ---
