@@ -1,0 +1,48 @@
+{{- if .Values.webhook.enabled }}
+---
+# Self-signed issuer for webhook certificates
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "kubeuser.fullname" . }}-webhook-issuer
+  namespace: {{ include "kubeuser.namespace" . }}
+  labels:
+    {{- include "kubeuser.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+---
+# Certificate for webhook server
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "kubeuser.fullname" . }}-webhook-cert
+  namespace: {{ include "kubeuser.namespace" . }}
+  labels:
+    {{- include "kubeuser.labels" . | nindent 4 }}
+spec:
+  # Secret name that will be created and mounted by the deployment
+  secretName: {{ include "kubeuser.fullname" . }}-webhook-certs
+  issuerRef:
+    name: {{ include "kubeuser.fullname" . }}-webhook-issuer
+    kind: Issuer
+  # Common name
+  commonName: {{ include "kubeuser.fullname" . }}-webhook-service.{{ include "kubeuser.namespace" . }}.svc.cluster.local
+  # DNS names that the certificate should be valid for
+  dnsNames:
+  - {{ include "kubeuser.fullname" . }}-webhook-service
+  - {{ include "kubeuser.fullname" . }}-webhook-service.{{ include "kubeuser.namespace" . }}
+  - {{ include "kubeuser.fullname" . }}-webhook-service.{{ include "kubeuser.namespace" . }}.svc
+  - {{ include "kubeuser.fullname" . }}-webhook-service.{{ include "kubeuser.namespace" . }}.svc.cluster.local
+  # Duration and renewal
+  duration: {{ .Values.webhook.certManager.duration | default "8760h" }}
+  renewBefore: {{ .Values.webhook.certManager.renewBefore | default "2160h" }}
+  # Key algorithm and size
+  privateKey:
+    algorithm: RSA
+    size: 2048
+  # Usage
+  usages:
+  - digital signature
+  - key encipherment
+  - server auth
+{{- end }}

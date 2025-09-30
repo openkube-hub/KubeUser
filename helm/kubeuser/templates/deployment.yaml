@@ -46,6 +46,8 @@ spec:
         env:
         - name: WEBHOOK_SERVICE_NAME
           value: {{ include "kubeuser.fullname" . }}-webhook-service
+        - name: WEBHOOK_SERVICE_NAMESPACE
+          value: {{ include "kubeuser.namespace" . }}
         {{- with .Values.env }}
         {{- range $key, $value := . }}
         - name: {{ $key }}
@@ -79,7 +81,9 @@ spec:
           name: tmp-dir
       volumes:
       - name: webhook-certs
-        emptyDir: {}
+        secret:
+          secretName: {{ include "kubeuser.fullname" . }}-webhook-certs
+          defaultMode: 420
       - name: tmp-dir
         emptyDir: {}
       {{- with .Values.nodeSelector }}

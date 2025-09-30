@@ -36,7 +36,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	authv1alpha1 "github.com/openkube-hub/KubeUser/api/v1alpha1"
-	"github.com/openkube-hub/KubeUser/internal/certs"
 	"github.com/openkube-hub/KubeUser/internal/controller"
 	webhookpkg "github.com/openkube-hub/KubeUser/internal/webhook"
 	// +kubebuilder:scaffold:imports
@@ -104,26 +103,21 @@ func main() {
 		tlsOpts = append(tlsOpts, disableHTTP2)
 	}
 
-	// Setup certificate manager for webhook certificates
-	webhookServiceName := os.Getenv("WEBHOOK_SERVICE_NAME")
-	if webhookServiceName == "" {
-		webhookServiceName = "webhook-service" // fallback
-	}
-	certManager := certs.NewManager(webhookCertPath, webhookCertName, webhookCertKey, webhookServiceName, "kubeuser")
+	// Certificate management is now handled by cert-manager
+	// The webhook server will use certificates from the mounted secret
 
-	// Ensure certificates exist before creating webhook server
-	if err := certManager.EnsureCertificates(); err != nil {
-		setupLog.Error(err, "failed to ensure webhook certificates")
-		os.Exit(1)
+	// Set default cert path if not provided
+	if webhookCertPath == "" {
+		webhookCertPath = "/tmp/k8s-webhook-server/serving-certs"
 	}
 
 	// Initial webhook TLS options
 	webhookTLSOpts := tlsOpts
 	webhookServerOptions := webhook.Options{
 		TLSOpts:  webhookTLSOpts,
-		CertDir:  certManager.CertDir,
-		CertName: certManager.CertName,
-		KeyName:  certManager.KeyName,
+		CertDir:  webhookCertPath,
+		CertName: webhookCertName,
+		KeyName:  webhookCertKey,
 	}
 
 	webhookServer := webhook.NewServer(webhookServerOptions)
@@ -201,11 +195,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Setup certificate manager for automatic renewal
-	if err := certManager.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to setup certificate manager")
-		os.Exit(1)
-	}
+	// Certificate management is handled by cert-manager - no manual setup needed
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

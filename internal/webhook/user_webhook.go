@@ -145,6 +145,12 @@ func (w *UserWebhook) ValidateUpdate(ctx context.Context, oldObj, newObj runtime
 	logger := logf.FromContext(ctx).WithName("user-webhook-update")
 	logger.Info("Validating User update", "user", newUser.Name)
 
+	// Skip validation if the user is being deleted
+	if newUser.DeletionTimestamp != nil {
+		logger.Info("Skipping validation for User being deleted", "user", newUser.Name)
+		return nil, nil
+	}
+
 	// Validate Role references in the updated spec
 	if err := w.validateRoles(ctx, newUser.Spec.Roles); err != nil {
 		return nil, err

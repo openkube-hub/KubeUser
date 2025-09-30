@@ -1,6 +1,7 @@
 resources:
 - service.yaml
 - manifests.yaml
+- issuer.yaml
 
 configurations:
 - kustomizeconfig.yaml
