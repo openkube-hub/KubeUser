@@ -35,9 +35,7 @@ import (
 )
 
 const (
-	kubeUserNamespace = "kubeuser"
-	defaultExpiry     = 365 * 24 * time.Hour
-	inClusterCAPath   = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+	inClusterCAPath = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 
 	userFinalizer = "auth.openkube.io/finalizer"
 
@@ -60,7 +58,7 @@ type UserReconciler struct {
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;clusterroles,verbs=get;list;watch
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings;clusterrolebindings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create
-// +kubebuilder:rbac:groups="",resources=serviceaccounts;secrets;configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=secrets;configmaps,verbs=get;list;watch;create;update;patch;delete
 // CSR
 // +kubebuilder:rbac:groups=certificates.k8s.io,resources=certificatesigningrequests,verbs=create;get;list;watch;update;patch;delete
 // +kubebuilder:rbac:groups=certificates.k8s.io,resources=certificatesigningrequests/approval,verbs=update
@@ -127,28 +125,14 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		logger.Info("Finalizer already exists, skipping")
 	}
 
-	// Ensure kubeuser namespace
-	logger.Info("Ensuring kubeuser namespace", "namespace", kubeUserNamespace)
-	if err := r.ensureNamespace(ctx, kubeUserNamespace); err != nil {
-		logger.Error(err, "Failed to ensure kubeuser namespace")
+	// Ensure user resources namespace
+	userNamespace := getKubeUserNamespace()
+	logger.Info("Ensuring user resources namespace", "namespace", userNamespace)
+	if err := r.ensureNamespace(ctx, userNamespace); err != nil {
+		logger.Error(err, "Failed to ensure user resources namespace")
 		return ctrl.Result{}, err
 	}
-	logger.Info("Kubeuser namespace ensured")
-
-	// Ensure ServiceAccount (identity anchor)
-	logger.Info("Creating/updating ServiceAccount", "name", username, "namespace", kubeUserNamespace)
-	sa := &corev1.ServiceAccount{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      username,
-			Namespace: kubeUserNamespace,
-			Labels:    map[string]string{"auth.openkube.io/user": username},
-		},
-	}
-	if err := r.createOrUpdate(ctx, sa); err != nil {
-		logger.Error(err, "Failed to create/update ServiceAccount")
-		return ctrl.Result{}, err
-	}
-	logger.Info("ServiceAccount created/updated successfully")
+	logger.Info("User resources namespace ensured")
 
 	// === Reconcile RoleBindings ===
 	logger.Info("Starting RoleBindings reconciliation", "rolesCount", len(user.Spec.Roles))
@@ -231,13 +215,21 @@ func (r *UserReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&authv1alpha1.User{}).
 		Owns(&rbacv1.RoleBinding{}).
 		Owns(&rbacv1.ClusterRoleBinding{}).
-		Owns(&corev1.ServiceAccount{}).
 		Owns(&corev1.Secret{}).
 		Named("user").
 		Complete(r)
 }
 
 // --- helpers ---
+
+// getKubeUserNamespace returns the namespace where all KubeUser resources should be created
+func getKubeUserNamespace() string {
+	namespace := os.Getenv("KUBEUSER_NAMESPACE")
+	if namespace == "" {
+		namespace = "kubeuser" // fallback to default
+	}
+	return namespace
+}
 
 func (r *UserReconciler) ensureNamespace(ctx context.Context, name string) error {
 	var ns corev1.Namespace
@@ -267,12 +259,12 @@ func (r *UserReconciler) createOrUpdate(ctx context.Context, obj client.Object) 
 // cleanupUserResources deletes all resources related to the user.
 func (r *UserReconciler) cleanupUserResources(ctx context.Context, user *authv1alpha1.User) {
 	username := user.Name
+	userNamespace := getKubeUserNamespace()
 
 	// Delete fixed resources
 	fixed := []client.Object{
-		&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: username, Namespace: kubeUserNamespace}},
-		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("%s-key", username), Namespace: kubeUserNamespace}},
-		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("%s-kubeconfig", username), Namespace: kubeUserNamespace}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("%s-key", username), Namespace: userNamespace}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("%s-kubeconfig", username), Namespace: userNamespace}},
 		&certv1.CertificateSigningRequest{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("%s-csr", username)}},
 	}
 	for _, obj := range fixed {
@@ -302,44 +294,25 @@ func (r *UserReconciler) updateUserStatus(ctx context.Context, user *authv1alpha
 	logger := logf.FromContext(ctx)
 	logger.Info("Updating user status", "name", user.Name)
 
-	// Always set expiry time if not set
-	if user.Status.ExpiryTime == "" {
-		expiry := r.calculateExpiry(user)
-		user.Status.ExpiryTime = expiry.Format(time.RFC3339)
-		user.Status.CertificateExpiry = "Calculated"
-		logger.Info("Set calculated expiry time", "expiry", user.Status.ExpiryTime)
-	}
-
-	// Parse expiry for phase determination
-	expiry, err := time.Parse(time.RFC3339, user.Status.ExpiryTime)
-	if err != nil {
-		// If we can't parse the existing expiry, recalculate it
-		expiry = r.calculateExpiry(user)
-		user.Status.ExpiryTime = expiry.Format(time.RFC3339)
-		user.Status.CertificateExpiry = "Calculated"
-		logger.Info("Recalculated expiry due to parse error", "error", err, "expiry", user.Status.ExpiryTime)
-	}
-
-	// Check if user has expired
-	if time.Now().After(expiry) {
-		user.Status.Phase = PhaseExpired
-		user.Status.Message = "User access has expired"
-	} else {
-		// User is active
-		user.Status.Phase = "Active"
-		roleCount := len(user.Spec.Roles)
-		clusterRoleCount := len(user.Spec.ClusterRoles)
-		totalRoles := roleCount + clusterRoleCount
-
-		if totalRoles == 0 {
-			user.Status.Message = "User has no assigned roles"
-		} else if roleCount > 0 && clusterRoleCount > 0 {
-			user.Status.Message = fmt.Sprintf("User provisioned with %d namespace role(s) and %d cluster role(s)", roleCount, clusterRoleCount)
-		} else if roleCount > 0 {
-			user.Status.Message = fmt.Sprintf("User provisioned with %d namespace role(s)", roleCount)
+	// Check if user certificate has expired (only if ExpiryTime is set)
+	if user.Status.ExpiryTime != "" {
+		if expiry, err := time.Parse(time.RFC3339, user.Status.ExpiryTime); err == nil {
+			if time.Now().After(expiry) {
+				user.Status.Phase = PhaseExpired
+				user.Status.Message = "User certificate has expired"
+				logger.Info("User certificate has expired", "expiry", user.Status.ExpiryTime)
+			} else {
+				// Certificate is still valid, set user as active
+				r.setActiveStatus(user)
+			}
 		} else {
-			user.Status.Message = fmt.Sprintf("User provisioned with %d cluster role(s)", clusterRoleCount)
+			logger.Error(err, "Failed to parse expiry time", "expiryTime", user.Status.ExpiryTime)
+			// If we can't parse expiry time, assume user is active
+			r.setActiveStatus(user)
 		}
+	} else {
+		// No expiry time set yet (certificate not issued), set user as active
+		r.setActiveStatus(user)
 	}
 
 	// Add condition for better status tracking
@@ -357,7 +330,7 @@ func (r *UserReconciler) updateUserStatus(ctx context.Context, user *authv1alpha
 	case "Expired":
 		conditionType = PhaseReady
 		conditionStatus = metav1.ConditionFalse
-		conditionReason = "UserExpired"
+		conditionReason = "CertificateExpired"
 	case "Pending":
 		conditionType = PhaseReady
 		conditionStatus = metav1.ConditionFalse
@@ -391,13 +364,31 @@ func (r *UserReconciler) updateUserStatus(ctx context.Context, user *authv1alpha
 	user.Status.Conditions = updatedConditions
 
 	logger.Info("Updating status", "phase", user.Status.Phase, "expiry", user.Status.ExpiryTime, "message", user.Status.Message)
-	err = r.Status().Update(ctx, user)
+	err := r.Status().Update(ctx, user)
 	if err != nil {
 		logger.Error(err, "Failed to update user status")
 		return err
 	}
 	logger.Info("Successfully updated user status")
 	return nil
+}
+
+// setActiveStatus sets the user status to active based on role assignments
+func (r *UserReconciler) setActiveStatus(user *authv1alpha1.User) {
+	user.Status.Phase = "Active"
+	roleCount := len(user.Spec.Roles)
+	clusterRoleCount := len(user.Spec.ClusterRoles)
+	totalRoles := roleCount + clusterRoleCount
+
+	if totalRoles == 0 {
+		user.Status.Message = "User has no assigned roles"
+	} else if roleCount > 0 && clusterRoleCount > 0 {
+		user.Status.Message = fmt.Sprintf("User provisioned with %d namespace role(s) and %d cluster role(s)", roleCount, clusterRoleCount)
+	} else if roleCount > 0 {
+		user.Status.Message = fmt.Sprintf("User provisioned with %d namespace role(s)", roleCount)
+	} else {
+		user.Status.Message = fmt.Sprintf("User provisioned with %d cluster role(s)", clusterRoleCount)
+	}
 }
 
 // reconcileRoleBindings ensures the correct RoleBindings exist and removes outdated ones
@@ -617,6 +608,7 @@ func clusterRoleBindingMatches(existing, desired *rbacv1.ClusterRoleBinding) boo
 
 func (r *UserReconciler) ensureCertKubeconfig(ctx context.Context, user *authv1alpha1.User) (bool, error) {
 	username := user.Name
+	userNamespace := getKubeUserNamespace()
 	keySecretName := fmt.Sprintf("%s-key", username)
 	cfgSecretName := fmt.Sprintf("%s-kubeconfig", username)
 	csrName := fmt.Sprintf("%s-csr", username)
@@ -639,7 +631,7 @@ func (r *UserReconciler) ensureCertKubeconfig(ctx context.Context, user *authv1a
 
 	// 1. Load/create key Secret
 	var keySecret corev1.Secret
-	err = r.Get(ctx, types.NamespacedName{Name: keySecretName, Namespace: kubeUserNamespace}, &keySecret)
+	err = r.Get(ctx, types.NamespacedName{Name: keySecretName, Namespace: userNamespace}, &keySecret)
 	var keyPEM []byte
 	if apierrors.IsNotFound(err) {
 		key, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -648,7 +640,7 @@ func (r *UserReconciler) ensureCertKubeconfig(ctx context.Context, user *authv1a
 		}
 		keyPEM = pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
 		keySecret = corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{Name: keySecretName, Namespace: kubeUserNamespace},
+			ObjectMeta: metav1.ObjectMeta{Name: keySecretName, Namespace: userNamespace},
 			Type:       corev1.SecretTypeOpaque,
 			Data:       map[string][]byte{"key.pem": keyPEM},
 		}
@@ -663,7 +655,7 @@ func (r *UserReconciler) ensureCertKubeconfig(ctx context.Context, user *authv1a
 
 	// 2. If kubeconfig already exists, return
 	var existingCfg corev1.Secret
-	if err := r.Get(ctx, types.NamespacedName{Name: cfgSecretName, Namespace: kubeUserNamespace}, &existingCfg); err == nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: cfgSecretName, Namespace: userNamespace}, &existingCfg); err == nil {
 		return false, nil
 	}
 
@@ -759,7 +751,7 @@ func (r *UserReconciler) ensureCertKubeconfig(ctx context.Context, user *authv1a
 
 	// 10. Save kubeconfig
 	cfgSecret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: cfgSecretName, Namespace: kubeUserNamespace},
+		ObjectMeta: metav1.ObjectMeta{Name: cfgSecretName, Namespace: userNamespace},
 		Type:       corev1.SecretTypeOpaque,
 		Data:       map[string][]byte{"config": kcfg},
 	}
@@ -890,21 +882,11 @@ func (r *UserReconciler) tryRawDER(certData []byte) (time.Time, error) {
 	return cert.NotAfter, nil
 }
 
-// calculateExpiry calculates expiry time based on user spec
-func (r *UserReconciler) calculateExpiry(user *authv1alpha1.User) time.Time {
-	expiry := time.Now().Add(defaultExpiry)
-	if user.Spec.Expiry != "" {
-		if d, err := time.ParseDuration(user.Spec.Expiry); err == nil {
-			expiry = time.Now().Add(d)
-		}
-	}
-	return expiry
-}
-
 // checkCertificateRotation checks if a certificate needs rotation based on expiry
 func (r *UserReconciler) checkCertificateRotation(ctx context.Context, cfgSecretName string, rotationThreshold time.Duration) (bool, error) {
+	userNamespace := getKubeUserNamespace()
 	var existingCfg corev1.Secret
-	if err := r.Get(ctx, types.NamespacedName{Name: cfgSecretName, Namespace: kubeUserNamespace}, &existingCfg); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: cfgSecretName, Namespace: userNamespace}, &existingCfg); err != nil {
 		if apierrors.IsNotFound(err) {
 			return false, nil // No existing certificate, no rotation needed
 		}
@@ -956,10 +938,11 @@ func (r *UserReconciler) extractClientCertFromKubeconfig(kubeconfigData []byte) 
 // cleanupCertificateResources removes existing certificate resources for rotation
 func (r *UserReconciler) cleanupCertificateResources(ctx context.Context, cfgSecretName, csrName string) error {
 	logger := logf.FromContext(ctx)
+	userNamespace := getKubeUserNamespace()
 
 	// Delete kubeconfig secret
 	kubeconfigSecret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: cfgSecretName, Namespace: kubeUserNamespace}, kubeconfigSecret); err == nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: cfgSecretName, Namespace: userNamespace}, kubeconfigSecret); err == nil {
 		logger.Info("Deleting kubeconfig secret for rotation", "secret", cfgSecretName)
 		if err := r.Delete(ctx, kubeconfigSecret); err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete kubeconfig secret: %w", err)

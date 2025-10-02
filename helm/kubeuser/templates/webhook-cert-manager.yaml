@@ -25,8 +25,8 @@ spec:
   issuerRef:
     name: {{ include "kubeuser.fullname" . }}-webhook-issuer
     kind: Issuer
-  # Common name
-  commonName: {{ include "kubeuser.fullname" . }}-webhook-service.{{ include "kubeuser.namespace" . }}.svc.cluster.local
+  # Common name (shortened to avoid 64 byte limit)
+  commonName: {{ include "kubeuser.fullname" . }}-webhook-service
   # DNS names that the certificate should be valid for
   dnsNames:
   - {{ include "kubeuser.fullname" . }}-webhook-service
