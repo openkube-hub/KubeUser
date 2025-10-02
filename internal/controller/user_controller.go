@@ -35,8 +35,7 @@ import (
 )
 
 const (
-	kubeUserNamespace = "kubeuser"
-	inClusterCAPath   = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+	inClusterCAPath = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 
 	userFinalizer = "auth.openkube.io/finalizer"
 
@@ -126,13 +125,14 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		logger.Info("Finalizer already exists, skipping")
 	}
 
-	// Ensure kubeuser namespace
-	logger.Info("Ensuring kubeuser namespace", "namespace", kubeUserNamespace)
-	if err := r.ensureNamespace(ctx, kubeUserNamespace); err != nil {
-		logger.Error(err, "Failed to ensure kubeuser namespace")
+	// Ensure user resources namespace
+	userNamespace := getKubeUserNamespace()
+	logger.Info("Ensuring user resources namespace", "namespace", userNamespace)
+	if err := r.ensureNamespace(ctx, userNamespace); err != nil {
+		logger.Error(err, "Failed to ensure user resources namespace")
 		return ctrl.Result{}, err
 	}
-	logger.Info("Kubeuser namespace ensured")
+	logger.Info("User resources namespace ensured")
 
 	// === Reconcile RoleBindings ===
 	logger.Info("Starting RoleBindings reconciliation", "rolesCount", len(user.Spec.Roles))
@@ -222,6 +222,15 @@ func (r *UserReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 // --- helpers ---
 
+// getKubeUserNamespace returns the namespace where all KubeUser resources should be created
+func getKubeUserNamespace() string {
+	namespace := os.Getenv("KUBEUSER_NAMESPACE")
+	if namespace == "" {
+		namespace = "kubeuser" // fallback to default
+	}
+	return namespace
+}
+
 func (r *UserReconciler) ensureNamespace(ctx context.Context, name string) error {
 	var ns corev1.Namespace
 	if err := r.Get(ctx, types.NamespacedName{Name: name}, &ns); err != nil {
@@ -250,11 +259,12 @@ func (r *UserReconciler) createOrUpdate(ctx context.Context, obj client.Object) 
 // cleanupUserResources deletes all resources related to the user.
 func (r *UserReconciler) cleanupUserResources(ctx context.Context, user *authv1alpha1.User) {
 	username := user.Name
+	userNamespace := getKubeUserNamespace()
 
 	// Delete fixed resources
 	fixed := []client.Object{
-		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("%s-key", username), Namespace: kubeUserNamespace}},
-		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("%s-kubeconfig", username), Namespace: kubeUserNamespace}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("%s-key", username), Namespace: userNamespace}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("%s-kubeconfig", username), Namespace: userNamespace}},
 		&certv1.CertificateSigningRequest{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("%s-csr", username)}},
 	}
 	for _, obj := range fixed {
@@ -598,6 +608,7 @@ func clusterRoleBindingMatches(existing, desired *rbacv1.ClusterRoleBinding) boo
 
 func (r *UserReconciler) ensureCertKubeconfig(ctx context.Context, user *authv1alpha1.User) (bool, error) {
 	username := user.Name
+	userNamespace := getKubeUserNamespace()
 	keySecretName := fmt.Sprintf("%s-key", username)
 	cfgSecretName := fmt.Sprintf("%s-kubeconfig", username)
 	csrName := fmt.Sprintf("%s-csr", username)
@@ -620,7 +631,7 @@ func (r *UserReconciler) ensureCertKubeconfig(ctx context.Context, user *authv1a
 
 	// 1. Load/create key Secret
 	var keySecret corev1.Secret
-	err = r.Get(ctx, types.NamespacedName{Name: keySecretName, Namespace: kubeUserNamespace}, &keySecret)
+	err = r.Get(ctx, types.NamespacedName{Name: keySecretName, Namespace: userNamespace}, &keySecret)
 	var keyPEM []byte
 	if apierrors.IsNotFound(err) {
 		key, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -629,7 +640,7 @@ func (r *UserReconciler) ensureCertKubeconfig(ctx context.Context, user *authv1a
 		}
 		keyPEM = pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
 		keySecret = corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{Name: keySecretName, Namespace: kubeUserNamespace},
+			ObjectMeta: metav1.ObjectMeta{Name: keySecretName, Namespace: userNamespace},
 			Type:       corev1.SecretTypeOpaque,
 			Data:       map[string][]byte{"key.pem": keyPEM},
 		}
@@ -644,7 +655,7 @@ func (r *UserReconciler) ensureCertKubeconfig(ctx context.Context, user *authv1a
 
 	// 2. If kubeconfig already exists, return
 	var existingCfg corev1.Secret
-	if err := r.Get(ctx, types.NamespacedName{Name: cfgSecretName, Namespace: kubeUserNamespace}, &existingCfg); err == nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: cfgSecretName, Namespace: userNamespace}, &existingCfg); err == nil {
 		return false, nil
 	}
 
@@ -740,7 +751,7 @@ func (r *UserReconciler) ensureCertKubeconfig(ctx context.Context, user *authv1a
 
 	// 10. Save kubeconfig
 	cfgSecret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: cfgSecretName, Namespace: kubeUserNamespace},
+		ObjectMeta: metav1.ObjectMeta{Name: cfgSecretName, Namespace: userNamespace},
 		Type:       corev1.SecretTypeOpaque,
 		Data:       map[string][]byte{"config": kcfg},
 	}
@@ -873,8 +884,9 @@ func (r *UserReconciler) tryRawDER(certData []byte) (time.Time, error) {
 
 // checkCertificateRotation checks if a certificate needs rotation based on expiry
 func (r *UserReconciler) checkCertificateRotation(ctx context.Context, cfgSecretName string, rotationThreshold time.Duration) (bool, error) {
+	userNamespace := getKubeUserNamespace()
 	var existingCfg corev1.Secret
-	if err := r.Get(ctx, types.NamespacedName{Name: cfgSecretName, Namespace: kubeUserNamespace}, &existingCfg); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: cfgSecretName, Namespace: userNamespace}, &existingCfg); err != nil {
 		if apierrors.IsNotFound(err) {
 			return false, nil // No existing certificate, no rotation needed
 		}
@@ -926,10 +938,11 @@ func (r *UserReconciler) extractClientCertFromKubeconfig(kubeconfigData []byte) 
 // cleanupCertificateResources removes existing certificate resources for rotation
 func (r *UserReconciler) cleanupCertificateResources(ctx context.Context, cfgSecretName, csrName string) error {
 	logger := logf.FromContext(ctx)
+	userNamespace := getKubeUserNamespace()
 
 	// Delete kubeconfig secret
 	kubeconfigSecret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: cfgSecretName, Namespace: kubeUserNamespace}, kubeconfigSecret); err == nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: cfgSecretName, Namespace: userNamespace}, kubeconfigSecret); err == nil {
 		logger.Info("Deleting kubeconfig secret for rotation", "secret", cfgSecretName)
 		if err := r.Delete(ctx, kubeconfigSecret); err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete kubeconfig secret: %w", err)

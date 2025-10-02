@@ -46,7 +46,7 @@ spec:
         env:
         - name: WEBHOOK_SERVICE_NAME
           value: {{ include "kubeuser.fullname" . }}-webhook-service
-        - name: WEBHOOK_SERVICE_NAMESPACE
+        - name: KUBEUSER_NAMESPACE
           value: {{ include "kubeuser.namespace" . }}
         {{- with .Values.env }}
         {{- range $key, $value := . }}
