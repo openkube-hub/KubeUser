@@ -59,7 +59,7 @@ type UserReconciler struct {
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;clusterroles,verbs=get;list;watch
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings;clusterrolebindings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create
-// +kubebuilder:rbac:groups="",resources=serviceaccounts;secrets;configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=secrets;configmaps,verbs=get;list;watch;create;update;patch;delete
 // CSR
 // +kubebuilder:rbac:groups=certificates.k8s.io,resources=certificatesigningrequests,verbs=create;get;list;watch;update;patch;delete
 // +kubebuilder:rbac:groups=certificates.k8s.io,resources=certificatesigningrequests/approval,verbs=update
@@ -133,21 +133,6 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, err
 	}
 	logger.Info("Kubeuser namespace ensured")
-
-	// Ensure ServiceAccount (identity anchor)
-	logger.Info("Creating/updating ServiceAccount", "name", username, "namespace", kubeUserNamespace)
-	sa := &corev1.ServiceAccount{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      username,
-			Namespace: kubeUserNamespace,
-			Labels:    map[string]string{"auth.openkube.io/user": username},
-		},
-	}
-	if err := r.createOrUpdate(ctx, sa); err != nil {
-		logger.Error(err, "Failed to create/update ServiceAccount")
-		return ctrl.Result{}, err
-	}
-	logger.Info("ServiceAccount created/updated successfully")
 
 	// === Reconcile RoleBindings ===
 	logger.Info("Starting RoleBindings reconciliation", "rolesCount", len(user.Spec.Roles))
@@ -230,7 +215,6 @@ func (r *UserReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&authv1alpha1.User{}).
 		Owns(&rbacv1.RoleBinding{}).
 		Owns(&rbacv1.ClusterRoleBinding{}).
-		Owns(&corev1.ServiceAccount{}).
 		Owns(&corev1.Secret{}).
 		Named("user").
 		Complete(r)
@@ -269,7 +253,6 @@ func (r *UserReconciler) cleanupUserResources(ctx context.Context, user *authv1a
 
 	// Delete fixed resources
 	fixed := []client.Object{
-		&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: username, Namespace: kubeUserNamespace}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("%s-key", username), Namespace: kubeUserNamespace}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("%s-kubeconfig", username), Namespace: kubeUserNamespace}},
 		&certv1.CertificateSigningRequest{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("%s-csr", username)}},
