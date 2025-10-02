@@ -35,27 +35,13 @@
    metadata:
      name: example-user
    spec:
-     roles:
-       - namespace: "default"
-         existingRole: "edit"
-     expiry: "7d"
+     clusterRoles:
+         existingClusterRole: view
    EOF
 
 4. Check user status:
    kubectl get users
    kubectl describe user example-user
-
-5. Monitor the operator logs:
-   kubectl logs -f deployment/{{ include "kubeuser.fullname" . }}-controller-manager -n {{ include "kubeuser.namespace" . }}
-
-{{- if .Values.webhook.enabled }}
-✅ Webhook Configuration: Self-signed certificates are automatically generated and configured
-{{- end }}
-
-{{- if .Values.metrics.enabled }}
-📊 Metrics Available:
-   The metrics endpoint is available at: http://{{ include "kubeuser.fullname" . }}-metrics-service.{{ include "kubeuser.namespace" . }}.svc.cluster.local:{{ .Values.metrics.service.port }}/metrics
-{{- end }}
 
 📖 Documentation:
    For more information, visit: https://github.com/openkube-hub/KubeUser

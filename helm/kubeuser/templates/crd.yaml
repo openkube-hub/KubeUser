@@ -22,7 +22,7 @@ spec:
       jsonPath: .status.phase
       name: Phase
       type: string
-    - description: User access expiry time
+    - description: Certificate expiry time
       jsonPath: .status.expiryTime
       name: Expiry
       type: string
@@ -75,11 +75,6 @@ spec:
                   - existingClusterRole
                   type: object
                 type: array
-              expiry:
-                description: |-
-                  Expiry specifies how long the access should last (e.g., "7d")
-                  Format will be parsed by the controller (e.g., 24h, 7d, 30m)
-                type: string
               roles:
                 description: Roles is a list of namespace-scoped Role bindings
                 items:

@@ -36,7 +36,6 @@ import (
 
 const (
 	kubeUserNamespace = "kubeuser"
-	defaultExpiry     = 365 * 24 * time.Hour
 	inClusterCAPath   = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 
 	userFinalizer = "auth.openkube.io/finalizer"
@@ -302,44 +301,25 @@ func (r *UserReconciler) updateUserStatus(ctx context.Context, user *authv1alpha
 	logger := logf.FromContext(ctx)
 	logger.Info("Updating user status", "name", user.Name)
 
-	// Always set expiry time if not set
-	if user.Status.ExpiryTime == "" {
-		expiry := r.calculateExpiry(user)
-		user.Status.ExpiryTime = expiry.Format(time.RFC3339)
-		user.Status.CertificateExpiry = "Calculated"
-		logger.Info("Set calculated expiry time", "expiry", user.Status.ExpiryTime)
-	}
-
-	// Parse expiry for phase determination
-	expiry, err := time.Parse(time.RFC3339, user.Status.ExpiryTime)
-	if err != nil {
-		// If we can't parse the existing expiry, recalculate it
-		expiry = r.calculateExpiry(user)
-		user.Status.ExpiryTime = expiry.Format(time.RFC3339)
-		user.Status.CertificateExpiry = "Calculated"
-		logger.Info("Recalculated expiry due to parse error", "error", err, "expiry", user.Status.ExpiryTime)
-	}
-
-	// Check if user has expired
-	if time.Now().After(expiry) {
-		user.Status.Phase = PhaseExpired
-		user.Status.Message = "User access has expired"
-	} else {
-		// User is active
-		user.Status.Phase = "Active"
-		roleCount := len(user.Spec.Roles)
-		clusterRoleCount := len(user.Spec.ClusterRoles)
-		totalRoles := roleCount + clusterRoleCount
-
-		if totalRoles == 0 {
-			user.Status.Message = "User has no assigned roles"
-		} else if roleCount > 0 && clusterRoleCount > 0 {
-			user.Status.Message = fmt.Sprintf("User provisioned with %d namespace role(s) and %d cluster role(s)", roleCount, clusterRoleCount)
-		} else if roleCount > 0 {
-			user.Status.Message = fmt.Sprintf("User provisioned with %d namespace role(s)", roleCount)
+	// Check if user certificate has expired (only if ExpiryTime is set)
+	if user.Status.ExpiryTime != "" {
+		if expiry, err := time.Parse(time.RFC3339, user.Status.ExpiryTime); err == nil {
+			if time.Now().After(expiry) {
+				user.Status.Phase = PhaseExpired
+				user.Status.Message = "User certificate has expired"
+				logger.Info("User certificate has expired", "expiry", user.Status.ExpiryTime)
+			} else {
+				// Certificate is still valid, set user as active
+				r.setActiveStatus(user)
+			}
 		} else {
-			user.Status.Message = fmt.Sprintf("User provisioned with %d cluster role(s)", clusterRoleCount)
+			logger.Error(err, "Failed to parse expiry time", "expiryTime", user.Status.ExpiryTime)
+			// If we can't parse expiry time, assume user is active
+			r.setActiveStatus(user)
 		}
+	} else {
+		// No expiry time set yet (certificate not issued), set user as active
+		r.setActiveStatus(user)
 	}
 
 	// Add condition for better status tracking
@@ -357,7 +337,7 @@ func (r *UserReconciler) updateUserStatus(ctx context.Context, user *authv1alpha
 	case "Expired":
 		conditionType = PhaseReady
 		conditionStatus = metav1.ConditionFalse
-		conditionReason = "UserExpired"
+		conditionReason = "CertificateExpired"
 	case "Pending":
 		conditionType = PhaseReady
 		conditionStatus = metav1.ConditionFalse
@@ -391,13 +371,31 @@ func (r *UserReconciler) updateUserStatus(ctx context.Context, user *authv1alpha
 	user.Status.Conditions = updatedConditions
 
 	logger.Info("Updating status", "phase", user.Status.Phase, "expiry", user.Status.ExpiryTime, "message", user.Status.Message)
-	err = r.Status().Update(ctx, user)
+	err := r.Status().Update(ctx, user)
 	if err != nil {
 		logger.Error(err, "Failed to update user status")
 		return err
 	}
 	logger.Info("Successfully updated user status")
 	return nil
+}
+
+// setActiveStatus sets the user status to active based on role assignments
+func (r *UserReconciler) setActiveStatus(user *authv1alpha1.User) {
+	user.Status.Phase = "Active"
+	roleCount := len(user.Spec.Roles)
+	clusterRoleCount := len(user.Spec.ClusterRoles)
+	totalRoles := roleCount + clusterRoleCount
+
+	if totalRoles == 0 {
+		user.Status.Message = "User has no assigned roles"
+	} else if roleCount > 0 && clusterRoleCount > 0 {
+		user.Status.Message = fmt.Sprintf("User provisioned with %d namespace role(s) and %d cluster role(s)", roleCount, clusterRoleCount)
+	} else if roleCount > 0 {
+		user.Status.Message = fmt.Sprintf("User provisioned with %d namespace role(s)", roleCount)
+	} else {
+		user.Status.Message = fmt.Sprintf("User provisioned with %d cluster role(s)", clusterRoleCount)
+	}
 }
 
 // reconcileRoleBindings ensures the correct RoleBindings exist and removes outdated ones
@@ -888,17 +886,6 @@ func (r *UserReconciler) tryRawDER(certData []byte) (time.Time, error) {
 	}
 
 	return cert.NotAfter, nil
-}
-
-// calculateExpiry calculates expiry time based on user spec
-func (r *UserReconciler) calculateExpiry(user *authv1alpha1.User) time.Time {
-	expiry := time.Now().Add(defaultExpiry)
-	if user.Spec.Expiry != "" {
-		if d, err := time.ParseDuration(user.Spec.Expiry); err == nil {
-			expiry = time.Now().Add(d)
-		}
-	}
-	return expiry
 }
 
 // checkCertificateRotation checks if a certificate needs rotation based on expiry

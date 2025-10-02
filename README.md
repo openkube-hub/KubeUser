@@ -9,7 +9,7 @@ KubeUser is a Kubernetes operator that automates user management by providing a 
 ### Why KubeUser?
 
 - **Declarative User Management**: Define users and their permissions using Kubernetes custom resources
-- **Temporary Access**: Built-in support for time-limited user access with automatic expiration
+- **Certificate Expiry**: Automatically tracks and manages certificate expiration
 - **Certificate-based Authentication**: Automatically generates client certificates and kubeconfig files
 - **RBAC Integration**: Seamlessly integrates with existing Kubernetes Role and ClusterRole resources
 - **Kubernetes Native**: Built using controller-runtime, following Kubernetes best practices
@@ -18,7 +18,7 @@ KubeUser is a Kubernetes operator that automates user management by providing a 
 ### Main Use Cases
 
 1. **Developer Onboarding**: Quickly grant new developers access to specific namespaces
-2. **Temporary Access**: Provide contractors or external users time-limited cluster access
+2. **Certificate Management**: Automatic certificate generation and expiration handling
 3. **Audit and Compliance**: Centralized user management with clear access tracking
 4. **GitOps Integration**: Manage user permissions through version-controlled YAML files
 
@@ -52,7 +52,6 @@ KubeUser follows the standard Kubernetes operator pattern:
 - [X] **Webhook validation for User resources**
 - [X] **Certificate rotation and renewal** (30 days before expiry)
 - [ ] **Templated Roles**: Provide predefined reusable RBAC role templates for common use cases
-- [ ] Expiry Support: Time-based access control with configurable expiration
 - [ ] High availability: support for multi-replica deployments
 - [ ] Metrics Endpoint: Prometheus-compatible metrics on port 8080
 - [ ] Health Checks: Liveness and readiness probes for robust deployments
@@ -150,7 +149,6 @@ spec:
       existingRole: "developer"
     - namespace: "staging"
       existingRole: "viewer"
-  expiry: "30d"  # Optional: 30 days expiry
 ```
 
 ### User with Cluster-wide Access
@@ -163,7 +161,6 @@ metadata:
 spec:
   clusterRoles:
     - existingClusterRole: "cluster-admin"
-  expiry: "7d"  # One week access
 ```
 
 ### Mixed Permissions Example
@@ -181,7 +178,6 @@ spec:
       existingRole: "tester"
   clusterRoles:
     - existingClusterRole: "view"  # Read-only cluster access
-  expiry: "14d"  # Two weeks access
 ```
 
 ### Field Reference
@@ -193,7 +189,6 @@ spec:
 | `spec.roles[].existingRole` | `string` | Yes | Name of the existing Role in the namespace |
 | `spec.clusterRoles` | `[]ClusterRoleSpec` | No | List of cluster-wide role bindings |
 | `spec.clusterRoles[].existingClusterRole` | `string` | Yes | Name of the existing ClusterRole |
-| `spec.expiry` | `string` | No | Duration (e.g., "24h", "7d", "30m") after which access expires |
 
 ### Managing Users
 
