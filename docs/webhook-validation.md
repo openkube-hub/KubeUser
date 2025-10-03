@@ -96,8 +96,8 @@ kubectl apply -k config/default
 ### Webhook Certificate Issues
 Check that cert-manager is running and the certificate is ready:
 ```bash
-kubectl get certificates -n kubeuser-system
-kubectl get secrets kubeuser-webhook-certs -n kubeuser-system
+kubectl get certificates -n kubeuser
+kubectl get secrets kubeuser-webhook-certs -n kubeuser
 ```
 
 ### Client Certificate Issues
@@ -126,7 +126,7 @@ kubectl annotate user username kubectl.kubernetes.io/restartedAt="$(date -Isecon
 ### Webhook Logs
 Check the controller manager logs for webhook validation events:
 ```bash
-kubectl logs -n kubeuser-system deployment/kubeuser-controller-manager
+kubectl logs -n kubeuser deployment/kubeuser-controller-manager
 ```
 
 ### Testing Validation

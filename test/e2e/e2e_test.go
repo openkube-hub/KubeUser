@@ -34,7 +34,7 @@ import (
 )
 
 // namespace where the project is deployed in
-const namespace = "kubeuser-system"
+const namespace = "kubeuser"
 
 // serviceAccountName created for the project
 const serviceAccountName = "kubeuser-controller-manager"
