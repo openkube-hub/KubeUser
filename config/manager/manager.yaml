@@ -66,7 +66,7 @@ spec:
           - --leader-elect
           - --health-probe-bind-address=:8081
           - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
-        image: controller:latest
+        image: ghcr.io/openkube-hub/kubeuser-controller:latest
         imagePullPolicy: IfNotPresent
         name: manager
         ports:

@@ -107,7 +107,7 @@ For local testing and development:
 make docker-build
 
 # Load image into kind cluster
-kind load docker-image controller:latest --name <your-cluster-name>
+kind load docker-image ghcr.io/openkube-hub/kubeuser-controller:latest --name <your-cluster-name>
 
 # Deploy with local image
 kubectl apply -k config/default
