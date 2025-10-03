@@ -17,11 +17,13 @@ metadata:
     app.kubernetes.io/name: kubeuser
     app.kubernetes.io/managed-by: kustomize
 spec:
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       control-plane: controller-manager
       app.kubernetes.io/name: kubeuser
-  replicas: 2
+  replicas: 1
   template:
     metadata:
       annotations:
@@ -81,13 +83,13 @@ spec:
           httpGet:
             path: /healthz
             port: 8081
-          initialDelaySeconds: 15
+          initialDelaySeconds: 30
           periodSeconds: 20
         readinessProbe:
           httpGet:
             path: /readyz
             port: 8081
-          initialDelaySeconds: 5
+          initialDelaySeconds: 15
           periodSeconds: 10
         # TODO(user): Configure the resources accordingly based on the project requirements.
         # More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/

@@ -4,6 +4,17 @@ nameReference:
   fieldSpecs:
   - path: webhooks/clientConfig/service/name
     kind: ValidatingAdmissionWebhook
+- kind: Secret
+  version: v1
+  fieldSpecs:
+  - path: spec/volumes/secret/secretName
+    kind: Deployment
+- kind: Issuer
+  group: cert-manager.io
+  version: v1
+  fieldSpecs:
+  - path: spec/issuerRef/name
+    kind: Certificate
 
 namespace:
 - path: webhooks/clientConfig/service/namespace

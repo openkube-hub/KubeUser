@@ -5,6 +5,8 @@ kind: Issuer
 metadata:
   name: webhook-issuer
   namespace: system
+  annotations:
+    cert-manager.io/disable-validation: "true"
 spec:
   selfSigned: {}
 ---
@@ -14,11 +16,13 @@ kind: Certificate
 metadata:
   name: webhook-cert
   namespace: system
+  annotations:
+    cert-manager.io/disable-validation: "true"
 spec:
   # Secret name that will be created and mounted by the deployment
   secretName: webhook-certs
   issuerRef:
-    name: kubeuser-webhook-issuer
+    name: webhook-issuer
     kind: Issuer
   # Common name (kustomization will prefix this with namePrefix)
   commonName: kubeuser-webhook-service.kubeuser.svc.cluster.local
