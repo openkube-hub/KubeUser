@@ -63,9 +63,17 @@ spec:
       - command:
         - /manager
         args:
+          - --metrics-bind-address=:8443
           - --leader-elect
           - --health-probe-bind-address=:8081
           - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
+        env:
+        - name: WEBHOOK_SERVICE_NAME
+          value: kubeuser-webhook-service
+        - name: KUBEUSER_NAMESPACE
+          value: kubeuser
+        - name: KUBERNETES_API_SERVER
+          value: https://kubernetes.default.svc
         image: ghcr.io/openkube-hub/kubeuser-controller:latest
         imagePullPolicy: IfNotPresent
         name: manager
@@ -104,10 +112,14 @@ spec:
         - mountPath: /tmp/k8s-webhook-server/serving-certs
           name: cert
           readOnly: true
+        - mountPath: /tmp
+          name: tmp-dir
       volumes:
       - name: cert
         secret:
           defaultMode: 420
           secretName: webhook-certs
+      - name: tmp-dir
+        emptyDir: {}
       serviceAccountName: controller-manager
       terminationGracePeriodSeconds: 10
