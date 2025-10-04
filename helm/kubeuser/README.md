@@ -21,9 +21,9 @@ helm install kubeuser ./helm/kubeuser
 
 # Install with custom namespace (following user preference)
 helm install kubeuser ./helm/kubeuser \
-  --set global.namespace=neta-test \
+  --set global.namespace=kubeuser \
   --set global.environment=test \
-  --set global.nameSuffix=-neta-test
+  --set global.nameSuffix=-kubeuser
 ```
 
 ### Custom Installation
@@ -42,9 +42,9 @@ The following table lists the configurable parameters and their default values:
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `global.namespace` | Target namespace for deployment | `neta-test` |
+| `global.namespace` | Target namespace for deployment | `kubeuser` |
 | `global.environment` | Environment label | `test` |
-| `global.nameSuffix` | Suffix for namespace name | `-neta-test` |
+| `global.nameSuffix` | Suffix for namespace name | `-kubeuser` |
 | `image.repository` | Controller image repository | `kubeuser-controller` |
 | `image.tag` | Controller image tag | `latest` |
 | `image.pullPolicy` | Image pull policy | `IfNotPresent` |
@@ -122,10 +122,10 @@ kubectl delete crd users.auth.openkube.io
 1. **Webhook Certificate Issues**
    ```bash
    # Check webhook certificate secret
-   kubectl get secret kubeuser-webhook-certs -n neta-test
+   kubectl get secret kubeuser-webhook-certs -n kubeuser
    
    # View webhook logs
-   kubectl logs -f deployment/kubeuser-controller-manager -n neta-test
+   kubectl logs -f deployment/kubeuser-controller-manager -n kubeuser
    ```
 
 2. **RBAC Permission Issues**
@@ -134,7 +134,7 @@ kubectl delete crd users.auth.openkube.io
    kubectl get clusterrolebinding | grep kubeuser
    
    # Check service account
-   kubectl get serviceaccount -n neta-test
+   kubectl get serviceaccount -n kubeuser
    ```
 
 3. **CRD Issues**
