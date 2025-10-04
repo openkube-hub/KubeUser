@@ -6,4 +6,11 @@ resources:
 configurations:
 - kustomizeconfig.yaml
 
+# Patch to add cert-manager CA injection annotation
+patches:
+- path: webhook_ca_injection_patch.yaml
+  target:
+    kind: ValidatingWebhookConfiguration
+    name: validating-webhook-configuration
+
 # No cert-manager replacements needed - certificates are self-managed by the controller

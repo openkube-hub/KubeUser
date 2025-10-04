@@ -8,6 +8,8 @@ rules:
   - ""
   resources:
   - configmaps
+  - pods
+  - replicasets
   - secrets
   - serviceaccounts
   verbs:
@@ -36,31 +38,25 @@ rules:
   - list
   - watch
 - apiGroups:
-  - ""
+  - admissionregistration.k8s.io
   resources:
-  - pods
-  - replicasets
+  - validatingwebhookconfigurations
   verbs:
   - get
-  - list
-  - watch
-  - create
-  - update
   - patch
-  - delete
 - apiGroups:
   - apps
   resources:
   - deployments
   - replicasets
   verbs:
+  - create
+  - delete
   - get
   - list
-  - watch
-  - create
-  - update
   - patch
-  - delete
+  - update
+  - watch
 - apiGroups:
   - auth.openkube.io
   resources:
@@ -107,10 +103,10 @@ rules:
   - update
 - apiGroups:
   - certificates.k8s.io
-  resources:
-  - signers
   resourceNames:
   - kubernetes.io/kube-apiserver-client
+  resources:
+  - signers
   verbs:
   - approve
 - apiGroups:
@@ -119,39 +115,23 @@ rules:
   - clusterrolebindings
   - rolebindings
   verbs:
+  - bind
   - create
   - delete
+  - escalate
   - get
   - list
   - patch
   - update
   - watch
-  - bind
-  - escalate
-# Grant permissions to bind any role/clusterrole (needed for user management)
-- apiGroups:
-  - rbac.authorization.k8s.io
-  resources:
-  - roles
-  - clusterroles
-  verbs:
-  - bind
-  - escalate
 - apiGroups:
   - rbac.authorization.k8s.io
   resources:
   - clusterroles
   - roles
   verbs:
+  - bind
+  - escalate
   - get
   - list
   - watch
-  - bind
-  - escalate
-- apiGroups:
-  - admissionregistration.k8s.io
-  resources:
-  - validatingwebhookconfigurations
-  verbs:
-  - get
-  - patch
