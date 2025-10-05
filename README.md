@@ -41,24 +41,25 @@ KubeUser follows the standard Kubernetes operator pattern:
                        └─────────────────┘
 ```
 
-#### 🚧 Planned Features
-- [ ] Reconciliation Loop: Continuous monitoring and enforcement of user permissions
+#### 🚧 implemented Features
+- [X] Reconciliation Loop: Continuous monitoring and enforcement of user permissions
 - [X] Finalizers: Proper cleanup of user resources when User objects are deleted
 - [X] Certificate Management: Automatic generation of client certificates using Kubernetes CSR API
 - [X] Kubeconfig Generation: Creates ready-to-use kubeconfig files stored as secrets
 - [X] RBAC Integration: Creates RoleBindings and ClusterRoleBindings based on User spec
 - [X] Role Validation: Validates that referenced Roles and ClusterRoles exist
-- [ ] Status Reporting: Comprehensive status updates with conditions
-- [X] **Webhook validation for User resources**
-- [X] **Certificate rotation and renewal** (30 days before expiry)
-- [ ] **Templated Roles**: Provide predefined reusable RBAC role templates for common use cases
-- [ ] High availability: support for multi-replica deployments
-- [ ] Metrics Endpoint: Prometheus-compatible metrics on port 8080
-- [ ] Health Checks: Liveness and readiness probes for robust deployments
-- [ ] Resource Cleanup: Automatic cleanup of associated resources on user deletion
-- [ ] User group management
+- [X] Webhook validation for User resources
+- [X] Certificate rotation and renewal (30 days before expiry)
+- [X] High availability: support for multi-replica deployments
+- [X] Health Checks: Liveness and readiness probes for robust deployments
+
+
+#### 🚧 Planned Features
+- [ ] **existingClusterRole implementation under user.roles**
+- [ ] **User group management with UserGroup crd**
+- [ ] **Templated Roles/clusterRoles**: Provide predefined reusable RBAC role templates for common use cases
 - [ ] Audit logging for user access changes
-- [ ] Grafana dashboard for user management metrics
+- [ ] Metrics Endpoint: Prometheus-compatible metrics on port 8080
 
 ## 📦 Installation Instructions
 
