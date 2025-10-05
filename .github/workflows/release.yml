@@ -26,7 +26,7 @@ jobs:
       # Build & push controller Docker image
       # --------------------------
       - name: Log in to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+        run: echo "${{ secrets.ACTION_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
       - name: Build and push controller
         run: |
@@ -76,6 +76,6 @@ jobs:
       - name: Publish Helm charts to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ secrets.ACTION_PAT }}
           publish_branch: gh-pages
           publish_dir: charts-dist
