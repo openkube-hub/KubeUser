@@ -1,0 +1,28 @@
+apiVersion: v1
+entries:
+  kubeuser:
+  - annotations:
+      category: Infrastructure
+    apiVersion: v2
+    appVersion: 0.0.1
+    created: "2025-10-05T20:48:11.5851684Z"
+    description: A Helm chart for KubeUser - Kubernetes-native user management operator
+    digest: 791fb195f0f9a26fa744bf0f49c22b5f575d94435457bc673fe8b42d18ebc480
+    home: https://github.com/openkube-hub/KubeUser
+    keywords:
+    - kubernetes
+    - operator
+    - user-management
+    - rbac
+    - authentication
+    maintainers:
+    - name: KubeUser Team
+      url: https://github.com/openkube-hub/KubeUser
+    name: kubeuser
+    sources:
+    - https://github.com/openkube-hub/KubeUser
+    type: application
+    urls:
+    - https://openkube-hub.github.io/KubeUser/kubeuser-0.0.1.tgz
+    version: 0.0.1
+generated: "2025-10-05T20:48:11.584379486Z"
