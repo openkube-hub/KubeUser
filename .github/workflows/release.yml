@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"   # trigger on semantic version tags like v0.1.0
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      # --------------------------
+      # Checkout repo
+      # --------------------------
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # --------------------------
+      # Set version from tag
+      # --------------------------
+      - name: Set VERSION
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
+
+      # --------------------------
+      # Build & push controller Docker image
+      # --------------------------
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Build and push controller
+        run: |
+          docker build -t ghcr.io/${{ github.repository_owner }}/kubeuser-controller:${VERSION} .
+          docker push ghcr.io/${{ github.repository_owner }}/kubeuser-controller:${VERSION}
+
+      # --------------------------
+      # Install Helm and yq
+      # --------------------------
+      - name: Install Helm and yq
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          sudo apt-get update
+          sudo apt-get install -y jq
+          sudo snap install yq
+
+      # --------------------------
+      # Update Helm chart versions
+      # --------------------------
+      - name: Update Chart.yaml and values.yaml
+        run: |
+          yq -i ".version = env(VERSION)" helm/kubeuser/Chart.yaml
+          yq -i ".appVersion = env(VERSION)" helm/kubeuser/Chart.yaml
+          yq -i ".image.tag = env(VERSION)" helm/kubeuser/values.yaml
+
+      # --------------------------
+      # Package Helm chart
+      # --------------------------
+      - name: Package Helm chart
+        run: helm package helm/kubeuser -d charts-dist
+
+      # --------------------------
+      # Update Helm repository index
+      # --------------------------
+      - name: Update Helm repo index
+        run: |
+          mkdir -p charts-dist
+          if [ -f charts-dist/index.yaml ]; then
+            helm repo index charts-dist --merge charts-dist/index.yaml --url https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+          else
+            helm repo index charts-dist --url https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+          fi
+
+      # --------------------------
+      # Publish only Helm artifacts to gh-pages
+      # --------------------------
+      - name: Publish Helm charts to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: charts-dist
