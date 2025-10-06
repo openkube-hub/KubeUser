@@ -85,7 +85,35 @@ kubectl wait --for=condition=ready pod -l app=cert-manager -n cert-manager --tim
 
 ### Deployment Options
 
-#### Option 1: Using Kustomize (Recommended)
+#### Option 1: Using Helm (Recommended)
+
+KubeUser publishes Helm charts via GitHub Pages. To install using Helm:
+
+```bash
+helm repo add kubeuser https://openkube-hub.github.io/KubeUser
+helm repo update
+
+# Install a specific released version (recommended)
+helm upgrade --install kubeuser kubeuser/kubeuser \
+  --namespace kubeuser \
+  --create-namespace \
+  --version <version>
+
+# List available versions
+helm search repo kubeuser --versions
+
+# Upgrade to a new version later
+# helm upgrade kubeuser kubeuser/kubeuser -n kubeuser --version <new-version>
+
+# Uninstall
+# helm uninstall kubeuser -n kubeuser
+```
+
+Notes:
+- All resource names are prefixed by the Helm release name (e.g., `kubeuser`).
+- The chart defaults the image.tag to the chart version; override with `--set image.tag=<tag>` if needed.
+
+#### Option 2: Using Kustomize
 
 ```bash
 # Clone the repository
@@ -99,7 +127,7 @@ kubectl apply -k config/default
 kubectl wait --for=condition=ready pod -l control-plane=controller-manager -n kubeuser --timeout=120s
 ```
 
-#### Option 2: Local Development with kind
+#### Option 3: Local Development with kind
 
 For local testing and development:
 
