@@ -4,10 +4,10 @@ entries:
   - annotations:
       category: Infrastructure
     apiVersion: v2
-    appVersion: 0.0.2
-    created: "2025-10-25T13:30:09.273305706Z"
+    appVersion: 0.0.3
+    created: "2026-01-01T14:26:58.370989087Z"
     description: A Helm chart for KubeUser - Kubernetes-native user management operator
-    digest: 1273a2bd129522319ce8e63584c97cee3e61b29b2a8d51d1698c928b0d890936
+    digest: 4111d267e4931a9eecfc47dd4096d4b2a0bade3d2f477f081dd432e6348b9193
     home: https://github.com/openkube-hub/KubeUser
     keywords:
     - kubernetes
@@ -23,6 +23,6 @@ entries:
     - https://github.com/openkube-hub/KubeUser
     type: application
     urls:
-    - https://openkube-hub.github.io/KubeUser/kubeuser-0.0.2.tgz
-    version: 0.0.2
-generated: "2025-10-25T13:30:09.272554546Z"
+    - https://openkube-hub.github.io/KubeUser/kubeuser-0.0.3.tgz
+    version: 0.0.3
+generated: "2026-01-01T14:26:58.369996193Z"
