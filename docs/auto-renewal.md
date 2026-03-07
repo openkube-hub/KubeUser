@@ -73,16 +73,16 @@ The system follows this strict hierarchy when determining renewal time:
 
 1. **Custom `renewBefore`**: If specified and valid, renew this duration before expiry
 2. **33% Rule**: Default cert-manager behavior (renew when 33% of lifetime remains)
-3. **Dynamic Safety Floor**: Proportional buffer (10% of TTL, capped at 1-2 minutes)
+3. **Fixed Safety Floor**: 15-minute minimum buffer to ensure propagation reliability in high-latency clusters
 
 ### Validation and Auto-Correction
 
-The system automatically validates and corrects aggressive renewal settings:
+The system automatically validates aggressive renewal settings:
 
 - **90% Cap**: `renewBefore` cannot exceed 90% of certificate TTL
-- **Dynamic Safety Floor**: Ensures minimum buffer based on certificate duration
-- **Auto-Correction**: Invalid settings are automatically adjusted with error messages
-- **Duration Limits**: Enforces 10-minute minimum (above Kubernetes 3-minute CSR limit) and 1-year maximum
+- **Fixed Safety Floor**: Ensures minimum 15-minute buffer for propagation reliability
+- **Strict Validation**: Invalid settings are rejected with clear error messages (fail-fast)
+- **Duration Limits**: Enforces 24-hour minimum TTL and 1-year maximum
 
 ### Examples
 
@@ -226,7 +226,7 @@ kubectl get secrets -l auth.openkube.io/rotation=true
 - `autoRenew`: Boolean (default: false)
 - `renewBefore`: Must be positive duration if specified
 - `renewBefore`: Cannot exceed 90% of certificate TTL
-- `renewBefore`: Must leave sufficient safety buffer (dynamic, 10% of TTL)
+- `renewBefore`: Must leave at least 15 minutes of certificate life (fixed safety floor)
 
 ### Duration Constraints
 - **Kubernetes CSR API**: Allows minimum 3 minutes via `expirationSeconds`
@@ -235,11 +235,11 @@ kubectl get secrets -l auth.openkube.io/rotation=true
 - **Maximum Duration**: 1 year (based on default `--cluster-signing-duration` flag)
 - **Cluster Administrator Note**: The maximum can be adjusted by changing the Kubernetes controller's `--cluster-signing-duration` flag, but KubeUser maintains the 1-year limit for security consistency
 
-### Auto-Correction Behavior
-Invalid `renewBefore` values are automatically corrected:
-- Too aggressive settings are capped at 90% of TTL
-- Settings too close to expiry are adjusted to maintain safety buffer
-- Corrections are logged with explanatory error messages
+### Validation Behavior
+Invalid `renewBefore` values are rejected with clear error messages:
+- Settings exceeding 90% of TTL are rejected (prevents aggressive renewal loops)
+- Settings leaving less than 15 minutes of certificate life are rejected (safety floor)
+- Both webhook and controller enforce these rules (fail-fast architecture)
 
 ## Error Handling and Recovery
 

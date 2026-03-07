@@ -71,7 +71,7 @@
    - Users are cluster-scoped resources
    - Auth type defaults to x509 if not specified
    - minimum TTL is 24h
-   - renewBefore is capped at 50% of TTL to prevent renewal loops
+   - renewBefore is capped at 90% of TTL with a 15-minute safety floor
    - The operator automatically generates kubeconfig files as secrets
    - Use 'kubectl get secrets' to find generated kubeconfig files
    - Set appropriate RBAC roles before creating users
