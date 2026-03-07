@@ -17,6 +17,7 @@ import (
 	"github.com/openkube-hub/KubeUser/internal/controller/auth"
 	"github.com/openkube-hub/KubeUser/internal/controller/cleanup"
 	"github.com/openkube-hub/KubeUser/internal/controller/helpers"
+	"github.com/openkube-hub/KubeUser/internal/controller/metrics"
 	"github.com/openkube-hub/KubeUser/internal/controller/rbac"
 	"github.com/openkube-hub/KubeUser/internal/controller/renewal"
 	corev1 "k8s.io/api/core/v1"
@@ -37,6 +38,7 @@ type UserReconciler struct {
 	AuthManager       *auth.Manager
 	RenewalCalculator *renewal.RenewalCalculator
 	SignerName        string // Configurable CSR signer for managed K8s support (EKS, GKE, AKS)
+	Metrics           *metrics.Recorder
 }
 
 // RBAC rules
@@ -63,13 +65,23 @@ type UserReconciler struct {
 // Reconcile orchestrates the user reconciliation process as a pure orchestrator.
 // It implements an idempotent update pattern to minimize etcd writes and prevent infinite loops.
 func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	start := time.Now()
 	logger := logf.FromContext(ctx)
 	logger.Info("=== START RECONCILE ===", "user", req.Name)
+
+	// Track reconciliation result for metrics
+	var reconcileResult string
+	defer func() {
+		if r.Metrics != nil {
+			r.Metrics.RecordReconciliation("user", reconcileResult, time.Since(start))
+		}
+	}()
 
 	// 1. Fetch User
 	var user authv1alpha1.User
 	if err := r.Get(ctx, req.NamespacedName, &user); err != nil {
 		logger.Info("User not found, ignoring", "user", req.Name, "error", err)
+		reconcileResult = "not_found"
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
@@ -86,11 +98,13 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 	// 2. Handle Deletion
 	if !user.DeletionTimestamp.IsZero() {
+		reconcileResult = "deleted"
 		return r.handleDeletion(ctx, &user)
 	}
 
 	// Ensure finalizer
 	if err := r.ensureFinalizer(ctx, &user); err != nil {
+		reconcileResult = "error"
 		return ctrl.Result{}, err
 	}
 
@@ -123,18 +137,27 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 	// Handle any error that occurred during business logic after status update
 	if err != nil {
+		reconcileResult = "error"
 		return r.handleError(ctx, &user, err)
 	}
 
 	// 6. Return pending result if one was captured (e.g., immediate requeue for Shadow Secret creation)
 	if pendingResult != nil {
 		logger.Info("=== END RECONCILE (PENDING REQUEUE) ===", "requeueAfter", pendingResult.RequeueAfter)
+		reconcileResult = "requeued"
 		return *pendingResult, nil
 	}
 
 	// 7. Calculate Requeue
 	requeueResult := r.calculateRequeue(ctx, &user)
 	logger.Info("=== END RECONCILE ===", "requeueAfter", requeueResult.RequeueAfter, "statusCommitted", statusChanged)
+	reconcileResult = "success"
+
+	// Update user sync status metric
+	if r.Metrics != nil {
+		r.Metrics.SetUserSyncStatus(user.Namespace, user.Name, user.Status.Phase == helpers.PhaseActive)
+	}
+
 	return requeueResult, nil
 }
 
@@ -318,7 +341,7 @@ func (r *UserReconciler) reconcileAuthentication(ctx context.Context, user *auth
 
 	// Initialize auth manager if needed
 	if r.AuthManager == nil {
-		r.AuthManager = auth.NewManager(r.Client, r.EventRecorder, r.SignerName)
+		r.AuthManager = auth.NewManager(r.Client, r.EventRecorder, r.SignerName, r.Metrics)
 	}
 
 	// Capture old values before authentication processing
@@ -586,7 +609,7 @@ func (r *UserReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	// Initialize auth manager with configurable signer
 	if r.AuthManager == nil {
-		r.AuthManager = auth.NewManager(r.Client, r.EventRecorder, r.SignerName)
+		r.AuthManager = auth.NewManager(r.Client, r.EventRecorder, r.SignerName, r.Metrics)
 	}
 
 	// Initialize renewal calculator

@@ -15,7 +15,7 @@ func TestX509Provider_Ensure(t *testing.T) {
 	_ = authv1alpha1.AddToScheme(scheme)
 
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
-	provider := NewX509Provider(client, nil, "") // nil event recorder for tests, default signer
+	provider := NewX509Provider(client, nil, "", nil) // nil event recorder and metrics for tests, default signer
 
 	user := &authv1alpha1.User{
 		ObjectMeta: metav1.ObjectMeta{
@@ -52,7 +52,7 @@ func TestX509Provider_Revoke(t *testing.T) {
 	_ = authv1alpha1.AddToScheme(scheme)
 
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
-	provider := NewX509Provider(client, nil, "") // nil event recorder for tests, default signer
+	provider := NewX509Provider(client, nil, "", nil) // nil event recorder and metrics for tests, default signer
 
 	user := &authv1alpha1.User{
 		ObjectMeta: metav1.ObjectMeta{

@@ -101,7 +101,7 @@ func TestRenewalCalculator_ShouldRenewNow_Basic(t *testing.T) {
 }
 
 func TestRotationManager_CSRName(t *testing.T) {
-	rm := NewRotationManager(nil, nil, "")
+	rm := NewRotationManager(nil, nil, "", nil)
 
 	csrName := rm.generateUniqueCSRName("alice", "12345678-1234-1234-1234-123456789012")
 	expected := "alice-renewal-12345678"
@@ -112,7 +112,7 @@ func TestRotationManager_CSRName(t *testing.T) {
 }
 
 func TestRotationManager_RequeueDelay(t *testing.T) {
-	rm := NewRotationManager(nil, nil, "")
+	rm := NewRotationManager(nil, nil, "", nil)
 
 	tests := []struct {
 		name         string

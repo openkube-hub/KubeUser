@@ -7,6 +7,7 @@ import (
 	"time"
 
 	authv1alpha1 "github.com/openkube-hub/KubeUser/api/v1alpha1"
+	"github.com/openkube-hub/KubeUser/internal/controller/metrics"
 	certv1 "k8s.io/api/certificates/v1"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -44,10 +45,11 @@ type Manager struct {
 	x509          Provider
 	oidc          Provider
 	signerName    string // Configurable signer for managed K8s support
+	metrics       *metrics.Recorder
 }
 
-// NewManager creates a new auth manager with the provided client, event recorder, and optional signer name
-func NewManager(c client.Client, eventRecorder record.EventRecorder, signerName string) *Manager {
+// NewManager creates a new auth manager with the provided client, event recorder, optional signer name, and metrics recorder
+func NewManager(c client.Client, eventRecorder record.EventRecorder, signerName string, metricsRecorder *metrics.Recorder) *Manager {
 	// Default to standard Kubernetes signer if not specified
 	if signerName == "" {
 		signerName = certv1.KubeAPIServerClientSignerName
@@ -55,9 +57,10 @@ func NewManager(c client.Client, eventRecorder record.EventRecorder, signerName 
 	return &Manager{
 		client:        c,
 		eventRecorder: eventRecorder,
-		x509:          NewX509Provider(c, eventRecorder, signerName),
+		x509:          NewX509Provider(c, eventRecorder, signerName, metricsRecorder),
 		oidc:          NewOIDCProvider(c),
 		signerName:    signerName,
+		metrics:       metricsRecorder,
 	}
 }
 
