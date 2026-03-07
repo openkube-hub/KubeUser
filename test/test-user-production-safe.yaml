@@ -6,7 +6,7 @@ spec:
   auth:
     type: x509
     ttl: "720h"  # 30 days - production safe
-    renewBefore: "240h"  # 10 days - 33% of TTL, well under 50% cap
+    renewBefore: "240h"  # 10 days - 33% of TTL, well under 90% cap
     autoRenew: true
   clusterRoles:
     - existingClusterRole: edit

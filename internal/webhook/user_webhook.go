@@ -270,18 +270,18 @@ func (w *UserWebhook) validateAuthSpec(user *authv1alpha1.User) error {
 				return fmt.Errorf("renewBefore must be positive, got: %v", renewBefore)
 			}
 
-			// WEBHOOK ENFORCEMENT: Strictly reject renewBefore > 50% of TTL
+			// WEBHOOK ENFORCEMENT: Strictly reject renewBefore > 90% of TTL
 			// This prevents Thundering Herd loops at the CLI level
-			maxAllowed := time.Duration(float64(certDuration) * 0.5)
+			maxAllowed := time.Duration(float64(certDuration) * 0.9)
 			if renewBefore > maxAllowed {
-				return fmt.Errorf("renewBefore (%v) exceeds 50%% of TTL (%v). Maximum allowed: %v. This prevents aggressive renewal loops and API-server exhaustion",
+				return fmt.Errorf("renewBefore (%v) exceeds 90%% of TTL (%v). Maximum allowed: %v. This prevents aggressive renewal loops and API-server exhaustion",
 					renewBefore, certDuration, maxAllowed)
 			}
 
-			// WEBHOOK ENFORCEMENT: Reject renewBefore that violates 5-minute safety floor
-			const safetyFloor = 5 * time.Minute
+			// WEBHOOK ENFORCEMENT: Reject renewBefore that violates 15-minute safety floor
+			const safetyFloor = 15 * time.Minute
 			if certDuration-renewBefore < safetyFloor {
-				return fmt.Errorf("renewBefore (%v) leaves less than 5 minutes of certificate life (TTL: %v). This would cause immediate renewal loops. Minimum certificate life required: 5m",
+				return fmt.Errorf("renewBefore (%v) leaves less than 15 minutes of certificate life (TTL: %v). This would cause immediate renewal loops. Minimum certificate life required: 15m",
 					renewBefore, certDuration)
 			}
 		}

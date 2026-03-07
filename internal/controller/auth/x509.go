@@ -60,6 +60,12 @@ func (p *X509Provider) Ensure(ctx context.Context, user *authv1alpha1.User) (boo
 		return false, nil, fmt.Errorf("invalid auth spec: %v", err)
 	}
 
+	// Validate renewal configuration (enforces 15-minute safety floor)
+	// CONTROLLER MODE: Reject dangerous configurations when webhook is not enabled
+	if err := renewal.ValidateRenewalConfig(user); err != nil {
+		return false, nil, fmt.Errorf("invalid renewal configuration: %w", err)
+	}
+
 	// Get the duration for certificate validity
 	duration := GetAuthDuration(user)
 	logger.Info("Using certificate duration", "duration", duration)

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	authv1alpha1 "github.com/openkube-hub/KubeUser/api/v1alpha1"
-	"github.com/openkube-hub/KubeUser/internal/controller/helpers"
 	certv1 "k8s.io/api/certificates/v1"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -68,11 +67,6 @@ func NewManager(c client.Client, eventRecorder record.EventRecorder, signerName 
 // - *ctrl.Result: non-nil if immediate requeue is needed
 // - error: actual error that should stop reconciliation
 func (m *Manager) Ensure(ctx context.Context, user *authv1alpha1.User) (bool, *ctrl.Result, error) {
-	// Validate renewal configuration first
-	if err := ValidateRenewalConfig(user); err != nil {
-		return false, nil, fmt.Errorf("invalid renewal configuration: %w", err)
-	}
-
 	provider, err := m.getProvider(user)
 	if err != nil {
 		return false, nil, err
@@ -210,51 +204,6 @@ func getMinimumDuration() time.Duration {
 	}
 	// Production minimum is 24 hours to prevent excessive renewal loops
 	return 24 * time.Hour
-}
-
-// ValidateRenewalConfig validates the renewal configuration in the user spec
-func ValidateRenewalConfig(user *authv1alpha1.User) error {
-	// Defensive check: if Auth is nil, return error
-	if user.Spec.Auth == nil {
-		return fmt.Errorf("authentication section is mandatory")
-	}
-
-	if !helpers.GetAutoRenew(user) {
-		return nil // No validation needed if auto-renewal is disabled
-	}
-
-	// Parse certificate duration
-	var certDuration time.Duration
-	if user.Spec.Auth.TTL != "" {
-		var err error
-		certDuration, err = time.ParseDuration(user.Spec.Auth.TTL)
-		if err != nil {
-			return fmt.Errorf("invalid TTL format: %v", err)
-		}
-	} else {
-		certDuration = 90 * 24 * time.Hour // Default 3 months
-	}
-
-	// Validate renewBefore if specified
-	if user.Spec.Auth.RenewBefore != nil {
-		renewBefore := user.Spec.Auth.RenewBefore.Duration
-
-		if renewBefore <= 0 {
-			return fmt.Errorf("renewBefore must be positive, got: %v", renewBefore)
-		}
-
-		if renewBefore >= certDuration {
-			return fmt.Errorf("renewBefore (%v) must be less than certificate TTL (%v)", renewBefore, certDuration)
-		}
-
-		// Ensure renewBefore is at least 2 minutes for very short certificates
-		minBuffer := 2 * time.Minute
-		if renewBefore < minBuffer && certDuration <= 10*time.Minute {
-			return fmt.Errorf("renewBefore (%v) must be at least %v for certificates shorter than 10 minutes", renewBefore, minBuffer)
-		}
-	}
-
-	return nil
 }
 
 // GetSafeAuthSpec returns a nil-safe AuthSpec with defaults applied.

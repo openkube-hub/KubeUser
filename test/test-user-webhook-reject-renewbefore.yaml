@@ -6,7 +6,7 @@ spec:
   auth:
     type: x509
     ttl: "720h"  # 30 days
-    renewBefore: "500h"  # WILL BE REJECTED: 69% of TTL, exceeds 50% cap
+    renewBefore: "660h"  # WILL BE REJECTED: 91.7% of TTL, exceeds 90% cap
     autoRenew: true
   clusterRoles:
     - existingClusterRole: view

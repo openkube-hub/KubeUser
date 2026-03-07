@@ -78,8 +78,8 @@ When deleting a User:
 - [x] **Automatic Certificate Generation**: Seamless integration with the Kubernetes CSR API for x509 credentials.
 - [x] **Stateful Rotation Engine**: Resumable, multi-step rotation using the **Shadow Secret** pattern for high availability.
 - [x] **Standardized Renewal Timing**: Renewal is triggered automatically when **33% (1/3)** of the certificate's total lifetime remains (following cert-manager standards).
-- [x] **Configurable Safety Floors**: Enforced **24-hour minimum TTL** and a **50% renewal cap** via Validating Webhooks to prevent aggressive loops.
-- [x] **Guaranteed Lifetime Buffer**: Implemented a mandatory **5-minute safety floor** to ensure certificates remain valid during the final rotation steps.
+- [x] **Configurable Safety Floors**: Enforced **24-hour minimum TTL** and a **90% renewal cap** via Validating Webhooks to prevent aggressive loops.
+- [x] **Guaranteed Lifetime Buffer**: Implemented a mandatory **15-minute safety floor** to ensure certificates remain valid during the final rotation steps and propagation in high-latency clusters.
 - [x] **Managed K8s Support**: Fully configurable CSR signers for EKS, GKE, and vanilla clusters.
 - [x] **Atomic Secret Updates**: Zero-downtime "flip" from old to new credentials only after successful verification.
 - [x] **Dynamic RBAC Reconciliation**: Automatic management of RoleBindings and ClusterRoleBindings based on CRD spec.
@@ -392,7 +392,7 @@ spec:
 | `spec.auth.type` | `string` | **Yes** | Authentication method: currently only `x509` supported (MANDATORY - no default). OIDC planned for future. |
 | `spec.auth.ttl` | `string` | No | Certificate lifetime (default: `2160h` = 3 months). Default written by webhook at creation. |
 | `spec.auth.autoRenew` | `boolean` | No | Enable automatic certificate renewal (default: `true`). Default written by webhook at creation. |
-| `spec.auth.renewBefore` | `string` | No | Renew this duration before expiry (overrides 33% rule) |
+| `spec.auth.renewBefore` | `string` | No | Renew this duration before expiry (overrides 33% rule). Cannot exceed 90% of TTL. |
 | `spec.roles` | `[]RoleSpec` | No | List of namespace-scoped role bindings |
 | `spec.roles[].namespace` | `string` | Yes | Target namespace for the role binding |
 | `spec.roles[].existingRole` | `string` | No* | Name of the existing Role in the namespace |

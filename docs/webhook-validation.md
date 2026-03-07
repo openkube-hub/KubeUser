@@ -13,7 +13,7 @@ The KubeUser operator includes an admission webhook that validates User resource
 - **Mutual exclusion validation**: Ensures only one of `existingRole` or `existingClusterRole` is specified per role entry
 - **Required field validation**: Ensures at least one role reference is provided when roles are specified
 - **Auth specification validation**: Validates TTL (24h minimum, 1 year maximum), renewBefore, and other auth configuration
-- **Renewal configuration validation**: Validates auto-renewal settings when enabled (50% cap, 5-minute safety floor)
+- **Renewal configuration validation**: Validates auto-renewal settings when enabled (90% cap, 15-minute safety floor)
 - **Mutating webhook**: Applies defaults for optional fields (ttl, autoRenew) from environment variables
 - **Clear error messages**: Provides descriptive error messages when validation fails
 
@@ -164,14 +164,14 @@ error validating User resource: invalid auth specification: TTL must be at least
 error validating User resource: invalid auth specification: TTL must not exceed 8760h0m0s, got: 17520h0m0s
 ```
 
-**Invalid renewal configuration (50% cap):**
+**Invalid renewal configuration (90% cap):**
 ```
-error validating User resource: invalid renewal configuration: renewBefore (15h) exceeds 50% of TTL (24h). Maximum allowed: 12h. This prevents aggressive renewal loops and API-server exhaustion
+error validating User resource: invalid renewal configuration: renewBefore (22h) exceeds 90% of TTL (24h). Maximum allowed: 21h36m. This prevents aggressive renewal loops and API-server exhaustion
 ```
 
-**Invalid renewal configuration (5-minute safety floor):**
+**Invalid renewal configuration (15-minute safety floor):**
 ```
-error validating User resource: invalid renewal configuration: renewBefore (23h55m) leaves less than 5 minutes of certificate life (TTL: 24h). This would cause immediate renewal loops. Minimum certificate life required: 5m
+error validating User resource: invalid renewal configuration: renewBefore (23h50m) leaves less than 15 minutes of certificate life (TTL: 24h). This would cause immediate renewal loops. Minimum certificate life required: 15m
 ```
 
 ## Deployment
