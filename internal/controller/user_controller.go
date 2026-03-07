@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	authv1alpha1 "github.com/openkube-hub/KubeUser/api/v1alpha1"
@@ -29,6 +30,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
+
+// activeReconcileCount tracks how many reconcile goroutines are running concurrently.
+var activeReconcileCount int64
 
 // UserReconciler reconciles a User object
 type UserReconciler struct {
@@ -69,11 +73,20 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	logger := logf.FromContext(ctx)
 	logger.Info("=== START RECONCILE ===", "user", req.Name)
 
+	// Track active reconcile goroutines as a proxy for work queue depth
+	active := atomic.AddInt64(&activeReconcileCount, 1)
+	if r.Metrics != nil {
+		r.Metrics.SetWorkQueueDepth("user", int(active))
+	}
+
 	// Track reconciliation result for metrics
 	var reconcileResult string
 	defer func() {
+		remaining := atomic.AddInt64(&activeReconcileCount, -1)
 		if r.Metrics != nil {
 			r.Metrics.RecordReconciliation("user", reconcileResult, time.Since(start))
+			r.Metrics.SetWorkQueueDepth("user", int(remaining))
+			r.updateAggregateMetrics(ctx)
 		}
 	}()
 
@@ -593,6 +606,60 @@ func (r *UserReconciler) calculateSmartRequeue(ctx context.Context, user *authv1
 	// No certificate information available, use default
 	logger.Info("No certificate information available, using default requeue")
 	return 30 * time.Minute, nil
+}
+
+// updateAggregateMetrics lists all users and updates cluster-wide gauge metrics.
+// Called at the end of every reconcile via defer so counts stay current after creates/deletes.
+func (r *UserReconciler) updateAggregateMetrics(ctx context.Context) {
+	var userList authv1alpha1.UserList
+	if err := r.List(ctx, &userList); err != nil {
+		return
+	}
+
+	now := time.Now()
+
+	// Count users by namespace+phase and track expiry windows
+	type nsStats struct {
+		phaseCounts map[string]float64
+		within24h   int
+		within7d    int
+	}
+	stats := map[string]*nsStats{}
+
+	for _, u := range userList.Items {
+		ns := u.Namespace
+		if ns == "" {
+			ns = "cluster"
+		}
+		phase := string(u.Status.Phase)
+		if phase == "" {
+			phase = "unknown"
+		}
+
+		if stats[ns] == nil {
+			stats[ns] = &nsStats{phaseCounts: map[string]float64{}}
+		}
+		stats[ns].phaseCounts[phase]++
+
+		if u.Status.ExpiryTime != "" {
+			if expiry, err := time.Parse(time.RFC3339, u.Status.ExpiryTime); err == nil {
+				until := expiry.Sub(now)
+				if until > 0 && until <= 24*time.Hour {
+					stats[ns].within24h++
+				}
+				if until > 0 && until <= 7*24*time.Hour {
+					stats[ns].within7d++
+				}
+			}
+		}
+	}
+
+	for ns, s := range stats {
+		for phase, count := range s.phaseCounts {
+			r.Metrics.SetUserCount(ns, phase, count)
+		}
+		r.Metrics.UpdateExpiryAlerts(ns, s.within24h, s.within7d)
+	}
 }
 
 // SetupWithManager wires the controller

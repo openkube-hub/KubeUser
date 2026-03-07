@@ -87,12 +87,12 @@ When deleting a User:
 - [x] **Helm Environmental Bridge**: Synchronized Helm values with operator logic via environment variable injection.
 - [x] **Basic Observability**: Health probes (8081) and structured logging with controller-runtime.
 - [x] **High Availability**: Leader election enabled by default for multi-replica controller deployments.
+- [x] Prometheus custom metrics for operational visibility
 
 #### 🚧 Planned Features
 - [ ] User Groups (UserGroup CRD)
 - [ ] Predefined role templates library
 - [ ] OIDC, LDAP/AD, and SSO integration
-- [ ] Prometheus custom metrics for operational visibility
 - [ ] Enhanced metrics with Grafana dashboards and Prometheus alerts
 - [ ] CLI tool and Web UI
 

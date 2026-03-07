@@ -1,0 +1,40 @@
+{{- if and .Values.metrics.enabled .Values.metrics.certManager.enabled }}
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "kubeuser.fullname" . }}-metrics-issuer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubeuser.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "kubeuser.fullname" . }}-metrics-cert
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubeuser.labels" . | nindent 4 }}
+spec:
+  secretName: {{ include "kubeuser.fullname" . }}-metrics-cert
+  issuerRef:
+    name: {{ include "kubeuser.fullname" . }}-metrics-issuer
+    kind: Issuer
+  commonName: {{ include "kubeuser.fullname" . }}-metrics-service
+  dnsNames:
+  - {{ include "kubeuser.fullname" . }}-metrics-service
+  - {{ include "kubeuser.fullname" . }}-metrics-service.{{ .Release.Namespace }}
+  - {{ include "kubeuser.fullname" . }}-metrics-service.{{ .Release.Namespace }}.svc
+  - {{ include "kubeuser.fullname" . }}-metrics-service.{{ .Release.Namespace }}.svc.{{ .Values.env.CLUSTER_DOMAIN | default "cluster.local" }}
+  duration: {{ .Values.metrics.certManager.duration }}
+  renewBefore: {{ .Values.metrics.certManager.renewBefore }}
+  privateKey:
+    algorithm: RSA
+    size: 2048
+  usages:
+  - digital signature
+  - key encipherment
+  - server auth
+{{- end }}

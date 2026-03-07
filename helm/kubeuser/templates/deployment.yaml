@@ -43,6 +43,13 @@ spec:
         {{- range .Values.manager.args }}
         - {{ . }}
         {{- end }}
+        {{- if .Values.metrics.enabled }}
+        - --metrics-bind-address=:{{ .Values.metrics.service.port }}
+        - --metrics-secure={{ .Values.metrics.secure }}
+        {{- if and .Values.metrics.secure .Values.metrics.certManager.enabled }}
+        - --metrics-cert-path=/tmp/k8s-metrics-server/serving-certs
+        {{- end }}
+        {{- end }}
         env:
         - name: WEBHOOK_SERVICE_NAME
           value: {{ include "kubeuser.fullname" . }}-webhook-service
@@ -85,6 +92,11 @@ spec:
           name: webhook-certs
         - mountPath: /tmp
           name: tmp-dir
+        {{- if and .Values.metrics.enabled .Values.metrics.secure .Values.metrics.certManager.enabled }}
+        - mountPath: /tmp/k8s-metrics-server/serving-certs
+          name: metrics-certs
+          readOnly: true
+        {{- end }}
       volumes:
       - name: webhook-certs
         secret:
@@ -92,6 +104,12 @@ spec:
           defaultMode: 420
       - name: tmp-dir
         emptyDir: {}
+      {{- if and .Values.metrics.enabled .Values.metrics.secure .Values.metrics.certManager.enabled }}
+      - name: metrics-certs
+        secret:
+          secretName: {{ include "kubeuser.fullname" . }}-metrics-cert
+          defaultMode: 420
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

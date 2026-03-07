@@ -114,13 +114,13 @@ metrics:
   # Mirrors the webhook cert setup — creates a self-signed Issuer and Certificate.
   # When disabled, controller-runtime auto-generates a self-signed cert (not for production).
   certManager:
-    enabled: false
+    enabled: true
     duration: 8760h
     renewBefore: 720h
   # ServiceMonitor for Prometheus Operator scraping.
   # Requires prometheus-operator (or kube-prometheus-stack) to be installed.
   serviceMonitor:
-    enabled: false
+    enabled: true
     # Namespace to deploy the ServiceMonitor into.
     # Defaults to the release namespace if not set.
     namespace: ""
@@ -129,14 +129,15 @@ metrics:
     # Timeout for each scrape request.
     scrapeTimeout: 10s
     # Extra labels to add to the ServiceMonitor (e.g. to match a Prometheus instance's serviceMonitorSelector).
-    additionalLabels: {}
+    additionalLabels:
+      release: prometheus-stack
     # Grant the Prometheus ServiceAccount permission to scrape /metrics by binding it
     # to the metrics-reader ClusterRole. Set both name and namespace to enable.
     # The ServiceMonitor uses bearerTokenFile (the Prometheus pod's own projected SA token),
     # so no separate Secret is needed — just provide the SA name here.
     prometheusServiceAccount:
-      name: ""
-      namespace: ""
+      name: "prometheus-stack-kube-prom-prometheus"
+      namespace: "monitoring"
 
 # Authentication and renewal defaults
 # These values are injected into the operator via environment variables and

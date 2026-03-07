@@ -23,6 +23,7 @@ type X509Provider struct {
 	renewalCalculator *renewal.RenewalCalculator
 	rotationManager   *renewal.RotationManager
 	signerName        string // Configurable signer for managed K8s support
+	metrics           *metrics.Recorder
 }
 
 // NewX509Provider creates a new x509 auth provider with configurable signer
@@ -36,6 +37,7 @@ func NewX509Provider(c client.Client, eventRecorder record.EventRecorder, signer
 		renewalCalculator: renewal.NewRenewalCalculator(),
 		rotationManager:   renewal.NewRotationManager(c, eventRecorder, signerName, metricsRecorder),
 		signerName:        signerName,
+		metrics:           metricsRecorder,
 	}
 }
 
@@ -141,6 +143,13 @@ func (p *X509Provider) Ensure(ctx context.Context, user *authv1alpha1.User) (boo
 	statusChanged, requeueNeeded, err := certs.EnsureCertKubeconfigWithDuration(ctx, p.client, user, duration, p.signerName)
 	if err != nil {
 		return statusChanged, nil, fmt.Errorf("failed to ensure certificate kubeconfig: %v", err)
+	}
+
+	// Record cert expiry metric after initial cert creation
+	if p.metrics != nil && statusChanged && user.Status.ExpiryTime != "" {
+		if expiry, err := time.Parse(time.RFC3339, user.Status.ExpiryTime); err == nil {
+			p.metrics.SetCertExpiry(user.Namespace, user.Name, "client", expiry)
+		}
 	}
 
 	if requeueNeeded {

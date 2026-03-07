@@ -14,6 +14,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	authv1alpha1 "github.com/openkube-hub/KubeUser/api/v1alpha1"
@@ -44,6 +45,9 @@ const (
 	RotationStateComplete
 	RotationStateError
 )
+
+// concurrentRotations tracks how many certificate rotations are in progress across all users.
+var concurrentRotations int64
 
 // RotationManager handles atomic certificate rotation with forward secrecy
 type RotationManager struct {
@@ -77,10 +81,18 @@ func (rm *RotationManager) RotateUserCertificate(ctx context.Context, user *auth
 	logger := logf.FromContext(ctx)
 	username := user.Name
 
-	// Track rotation metrics
+	// Track concurrent rotations
+	current := atomic.AddInt64(&concurrentRotations, 1)
+	if rm.metrics != nil {
+		rm.metrics.SetConcurrentRotations(int(current))
+		rm.metrics.SetRotationQueueLength(int(current))
+	}
 	defer func() {
+		remaining := atomic.AddInt64(&concurrentRotations, -1)
 		if rm.metrics != nil {
 			rm.metrics.ObserveCertRotationDuration(user.Namespace, time.Since(start))
+			rm.metrics.SetConcurrentRotations(int(remaining))
+			rm.metrics.SetRotationQueueLength(int(remaining))
 		}
 	}()
 
