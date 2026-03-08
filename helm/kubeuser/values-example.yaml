@@ -9,7 +9,6 @@ fullnameOverride: ""
 
 # Global settings
 global:
-  namespace: kubeuser-prod
   nameSuffix: "-prod"
 
 # Image configuration
@@ -94,7 +93,7 @@ nodeSelector:
   node-role.kubernetes.io/worker: "true"
 
 # Tolerations for scheduling
-tolerances:
+tolerations:
 - key: "node-role.kubernetes.io/control-plane"
   operator: "Exists"
   effect: "NoSchedule"
@@ -129,8 +128,7 @@ manager:
     - --leader-elect
     - --health-probe-bind-address=:8081
     - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
-    - --log-level=info
-    - --metrics-bind-address=:8080
+    - --zap-log-level=info
 
 # Webhook configuration
 webhook:
@@ -139,6 +137,9 @@ webhook:
   # Production: Fail (block requests if webhook fails)
   # Development: Ignore (allow requests if webhook fails)
   failurePolicy: Fail
+  certManager:
+    duration: 8760h    # 1 year
+    renewBefore: 2160h # 90 days
   service:
     type: ClusterIP
     port: 443
@@ -147,15 +148,46 @@ webhook:
 # Metrics configuration
 metrics:
   enabled: true
+  # Serve metrics over HTTPS with authn/authz filtering (recommended for production).
+  # Set to false only for development; also disables TLS in the ServiceMonitor.
+  secure: true
   service:
     type: ClusterIP
-    port: 8080
+    # Use 8443 for HTTPS (default) or 8080 for HTTP (when secure: false).
+    port: 8443
+  # cert-manager TLS for the metrics endpoint.
+  # Mirrors the webhook cert setup — creates a self-signed Issuer and Certificate.
+  # When disabled, controller-runtime auto-generates a self-signed cert (not for production).
+  certManager:
+    enabled: true
+    duration: 8760h
+    renewBefore: 720h
+  # ServiceMonitor for Prometheus Operator scraping.
+  # Requires prometheus-operator (or kube-prometheus-stack) to be installed.
+  serviceMonitor:
+    enabled: true
+    # Namespace to deploy the ServiceMonitor into.
+    # Defaults to the release namespace if not set.
+    namespace: ""
+    # How frequently Prometheus scrapes the metrics endpoint.
+    interval: 30s
+    # Timeout for each scrape request.
+    scrapeTimeout: 10s
+    # Extra labels to add to the ServiceMonitor (e.g. to match a Prometheus instance's serviceMonitorSelector).
+    additionalLabels:
+      release: prometheus-stack
+    # Grant the Prometheus ServiceAccount permission to scrape /metrics by binding it
+    # to the metrics-reader ClusterRole. Set both name and namespace to enable.
+    # The ServiceMonitor uses bearerTokenFile (the Prometheus pod's own projected SA token),
+    # so no separate Secret is needed — just provide the SA name here.
+    prometheusServiceAccount:
+      name: "prometheus-stack-kube-prom-prometheus"
+      namespace: "monitoring"
 
-# Authentication and renewal defaults (documented behavior)
-# NOTE: These values are not wired into templates; they describe the operator's
-# internal defaults, which are persisted via the mutating webhook:
-# - TTL: 2160h (90 days)
-# - AutoRenew: true
+# Authentication and renewal defaults
+# These values are injected into the operator via environment variables
+# (KUBEUSER_DEFAULT_TTL, KUBEUSER_DEFAULT_AUTORENEW) and applied by the
+# mutating webhook when User resources are created without explicit values.
 authDefaults:
   ttl: "2160h"
   autoRenew: true
@@ -164,9 +196,6 @@ authDefaults:
 env:
   KUBERNETES_API_SERVER: "https://kubernetes.default.svc"
   CLUSTER_DOMAIN: "cluster.local"
-  LOG_LEVEL: "info"
-  ENABLE_PROFILING: "false"
-  METRICS_ADDR: ":8080"
 
 # CSR signer configuration (managed Kubernetes support)
 # This controls which Kubernetes signer is used for certificate CSRs.

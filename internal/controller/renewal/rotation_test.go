@@ -14,7 +14,7 @@ import (
 )
 
 func TestRotationManager_generateUniqueCSRName(t *testing.T) {
-	rm := NewRotationManager(nil, nil, "")
+	rm := NewRotationManager(nil, nil, "", nil)
 
 	tests := []struct {
 		name     string
@@ -130,7 +130,7 @@ func TestRotationManager_IsRotationInProgress(t *testing.T) {
 				WithRuntimeObjects(objects...).
 				Build()
 
-			rm := NewRotationManager(client, nil, "")
+			rm := NewRotationManager(client, nil, "", nil)
 
 			gotInProgress, gotCSRName, err := rm.IsRotationInProgress(context.TODO(), tt.username)
 
@@ -151,7 +151,7 @@ func TestRotationManager_IsRotationInProgress(t *testing.T) {
 }
 
 func TestRotationManager_GetRotationRequeueDelay(t *testing.T) {
-	rm := NewRotationManager(nil, nil, "")
+	rm := NewRotationManager(nil, nil, "", nil)
 
 	tests := []struct {
 		name         string
@@ -191,7 +191,7 @@ func TestRotationManager_GetRotationRequeueDelay(t *testing.T) {
 }
 
 func TestRotationManager_recordUniqueAttempt_Basic(t *testing.T) {
-	rm := NewRotationManager(nil, nil, "")
+	rm := NewRotationManager(nil, nil, "", nil)
 
 	// Test basic functionality - adding first attempt
 	user := &authv1alpha1.User{
@@ -219,7 +219,7 @@ func TestRotationManager_recordUniqueAttempt_Basic(t *testing.T) {
 }
 
 func TestRotationManager_validateCSRForApproval(t *testing.T) {
-	rm := NewRotationManager(nil, nil, "")
+	rm := NewRotationManager(nil, nil, "", nil)
 
 	tests := []struct {
 		name    string

@@ -11,12 +11,14 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	authv1alpha1 "github.com/openkube-hub/KubeUser/api/v1alpha1"
 	"github.com/openkube-hub/KubeUser/internal/controller/auth"
 	"github.com/openkube-hub/KubeUser/internal/controller/cleanup"
 	"github.com/openkube-hub/KubeUser/internal/controller/helpers"
+	"github.com/openkube-hub/KubeUser/internal/controller/metrics"
 	"github.com/openkube-hub/KubeUser/internal/controller/rbac"
 	"github.com/openkube-hub/KubeUser/internal/controller/renewal"
 	corev1 "k8s.io/api/core/v1"
@@ -29,6 +31,9 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+// activeReconcileCount tracks how many reconcile goroutines are running concurrently.
+var activeReconcileCount int64
+
 // UserReconciler reconciles a User object
 type UserReconciler struct {
 	client.Client
@@ -37,6 +42,7 @@ type UserReconciler struct {
 	AuthManager       *auth.Manager
 	RenewalCalculator *renewal.RenewalCalculator
 	SignerName        string // Configurable CSR signer for managed K8s support (EKS, GKE, AKS)
+	Metrics           *metrics.Recorder
 }
 
 // RBAC rules
@@ -63,13 +69,32 @@ type UserReconciler struct {
 // Reconcile orchestrates the user reconciliation process as a pure orchestrator.
 // It implements an idempotent update pattern to minimize etcd writes and prevent infinite loops.
 func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	start := time.Now()
 	logger := logf.FromContext(ctx)
 	logger.Info("=== START RECONCILE ===", "user", req.Name)
+
+	// Track active reconcile goroutines as a proxy for work queue depth
+	active := atomic.AddInt64(&activeReconcileCount, 1)
+	if r.Metrics != nil {
+		r.Metrics.SetWorkQueueDepth("user", int(active))
+	}
+
+	// Track reconciliation result for metrics
+	var reconcileResult string
+	defer func() {
+		remaining := atomic.AddInt64(&activeReconcileCount, -1)
+		if r.Metrics != nil {
+			r.Metrics.RecordReconciliation("user", reconcileResult, time.Since(start))
+			r.Metrics.SetWorkQueueDepth("user", int(remaining))
+			r.updateAggregateMetrics(ctx)
+		}
+	}()
 
 	// 1. Fetch User
 	var user authv1alpha1.User
 	if err := r.Get(ctx, req.NamespacedName, &user); err != nil {
 		logger.Info("User not found, ignoring", "user", req.Name, "error", err)
+		reconcileResult = "not_found"
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
@@ -86,11 +111,13 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 	// 2. Handle Deletion
 	if !user.DeletionTimestamp.IsZero() {
-		return r.handleDeletion(ctx, &user)
+		reconcileResult = "deleted"
+		return ctrl.Result{}, r.handleDeletion(ctx, &user)
 	}
 
 	// Ensure finalizer
 	if err := r.ensureFinalizer(ctx, &user); err != nil {
+		reconcileResult = "error"
 		return ctrl.Result{}, err
 	}
 
@@ -123,18 +150,27 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 	// Handle any error that occurred during business logic after status update
 	if err != nil {
+		reconcileResult = "error"
 		return r.handleError(ctx, &user, err)
 	}
 
 	// 6. Return pending result if one was captured (e.g., immediate requeue for Shadow Secret creation)
 	if pendingResult != nil {
 		logger.Info("=== END RECONCILE (PENDING REQUEUE) ===", "requeueAfter", pendingResult.RequeueAfter)
+		reconcileResult = "requeued"
 		return *pendingResult, nil
 	}
 
 	// 7. Calculate Requeue
 	requeueResult := r.calculateRequeue(ctx, &user)
 	logger.Info("=== END RECONCILE ===", "requeueAfter", requeueResult.RequeueAfter, "statusCommitted", statusChanged)
+	reconcileResult = "success"
+
+	// Update user sync status metric
+	if r.Metrics != nil {
+		r.Metrics.SetUserSyncStatus(user.Namespace, user.Name, user.Status.Phase == helpers.PhaseActive)
+	}
+
 	return requeueResult, nil
 }
 
@@ -205,7 +241,7 @@ func (r *UserReconciler) ensureInitialStatus(user *authv1alpha1.User) bool {
 
 // handleDeletion manages the user deletion process including cleanup and finalizer removal.
 // This function gracefully handles etcd race conditions that occur during concurrent deletion reconciliations.
-func (r *UserReconciler) handleDeletion(ctx context.Context, user *authv1alpha1.User) (ctrl.Result, error) {
+func (r *UserReconciler) handleDeletion(ctx context.Context, user *authv1alpha1.User) error {
 	logger := logf.FromContext(ctx)
 	logger.Info("User is being deleted, starting cleanup")
 
@@ -225,13 +261,13 @@ func (r *UserReconciler) handleDeletion(ctx context.Context, user *authv1alpha1.
 			// Case 1: Object already deleted by another reconciliation
 			if client.IgnoreNotFound(err) == nil {
 				logger.Info("Ignoring harmless race condition: user already deleted, finalizer removal not needed")
-				return ctrl.Result{}, nil
+				return nil
 			}
 
 			// Case 2: Optimistic concurrency conflict (ResourceVersion mismatch)
 			if apierrors.IsConflict(err) {
 				logger.Info("Ignoring harmless race condition: conflict removing finalizer, likely already removed by another reconciliation")
-				return ctrl.Result{}, nil
+				return nil
 			}
 
 			// Case 3: etcd precondition failures (UID mismatch during deletion)
@@ -241,18 +277,18 @@ func (r *UserReconciler) handleDeletion(ctx context.Context, user *authv1alpha1.
 				logger.Info("Ignoring harmless race condition: etcd precondition failed during deletion",
 					"error", errMsg,
 					"reason", "Object is being deleted concurrently")
-				return ctrl.Result{}, nil
+				return nil
 			}
 
 			// Only log actual errors that need attention
 			logger.Error(err, "Failed to remove finalizer - unexpected error")
-			return ctrl.Result{}, err
+			return err
 		}
 		logger.Info("Successfully cleaned up and removed finalizer")
 	}
 
 	logger.Info("=== END RECONCILE (DELETION) ===")
-	return ctrl.Result{}, nil
+	return nil
 }
 
 // ensureFinalizer adds the user finalizer if not present.
@@ -318,7 +354,7 @@ func (r *UserReconciler) reconcileAuthentication(ctx context.Context, user *auth
 
 	// Initialize auth manager if needed
 	if r.AuthManager == nil {
-		r.AuthManager = auth.NewManager(r.Client, r.EventRecorder, r.SignerName)
+		r.AuthManager = auth.NewManager(r.Client, r.EventRecorder, r.SignerName, r.Metrics)
 	}
 
 	// Capture old values before authentication processing
@@ -572,6 +608,61 @@ func (r *UserReconciler) calculateSmartRequeue(ctx context.Context, user *authv1
 	return 30 * time.Minute, nil
 }
 
+// updateAggregateMetrics lists all users and updates cluster-wide gauge metrics.
+// Called at the end of every reconcile via defer so counts stay current after creates/deletes.
+func (r *UserReconciler) updateAggregateMetrics(ctx context.Context) {
+	var userList authv1alpha1.UserList
+	if err := r.List(ctx, &userList); err != nil {
+		return
+	}
+
+	now := time.Now()
+
+	// Count users by namespace+phase and track expiry windows
+	type nsStats struct {
+		phaseCounts map[string]float64
+		within24h   int
+		within7d    int
+	}
+	stats := map[string]*nsStats{}
+
+	for _, u := range userList.Items {
+		ns := u.Namespace
+		if ns == "" {
+			ns = "cluster"
+		}
+		phase := u.Status.Phase
+		if phase == "" {
+			phase = "unknown"
+		}
+
+		if stats[ns] == nil {
+			stats[ns] = &nsStats{phaseCounts: map[string]float64{}}
+		}
+		stats[ns].phaseCounts[phase]++
+
+		if u.Status.ExpiryTime != "" {
+			if expiry, err := time.Parse(time.RFC3339, u.Status.ExpiryTime); err == nil {
+				until := expiry.Sub(now)
+				if until > 0 && until <= 24*time.Hour {
+					stats[ns].within24h++
+				}
+				if until > 0 && until <= 7*24*time.Hour {
+					stats[ns].within7d++
+				}
+			}
+		}
+	}
+
+	r.Metrics.ResetUserCounts()
+	for ns, s := range stats {
+		for phase, count := range s.phaseCounts {
+			r.Metrics.SetUserCount(ns, phase, count)
+		}
+		r.Metrics.UpdateExpiryAlerts(ns, s.within24h, s.within7d)
+	}
+}
+
 // SetupWithManager wires the controller
 func (r *UserReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Initialize event recorder if not already set
@@ -586,7 +677,7 @@ func (r *UserReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	// Initialize auth manager with configurable signer
 	if r.AuthManager == nil {
-		r.AuthManager = auth.NewManager(r.Client, r.EventRecorder, r.SignerName)
+		r.AuthManager = auth.NewManager(r.Client, r.EventRecorder, r.SignerName, r.Metrics)
 	}
 
 	// Initialize renewal calculator

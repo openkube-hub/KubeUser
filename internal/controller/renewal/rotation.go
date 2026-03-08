@@ -14,11 +14,13 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	authv1alpha1 "github.com/openkube-hub/KubeUser/api/v1alpha1"
 	"github.com/openkube-hub/KubeUser/internal/controller/certs"
 	"github.com/openkube-hub/KubeUser/internal/controller/helpers"
+	"github.com/openkube-hub/KubeUser/internal/controller/metrics"
 	certv1 "k8s.io/api/certificates/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -44,15 +46,19 @@ const (
 	RotationStateError
 )
 
+// concurrentRotations tracks how many certificate rotations are in progress across all users.
+var concurrentRotations int64
+
 // RotationManager handles atomic certificate rotation with forward secrecy
 type RotationManager struct {
 	client        client.Client
 	eventRecorder record.EventRecorder
 	signerName    string // Configurable signer for managed K8s support (EKS, GKE, AKS)
+	metrics       *metrics.Recorder
 }
 
 // NewRotationManager creates a new rotation manager with configurable signer
-func NewRotationManager(k8sClient client.Client, eventRecorder record.EventRecorder, signerName string) *RotationManager {
+func NewRotationManager(k8sClient client.Client, eventRecorder record.EventRecorder, signerName string, metricsRecorder *metrics.Recorder) *RotationManager {
 	// Default to standard Kubernetes signer if not specified
 	if signerName == "" {
 		signerName = certv1.KubeAPIServerClientSignerName
@@ -61,6 +67,7 @@ func NewRotationManager(k8sClient client.Client, eventRecorder record.EventRecor
 		client:        k8sClient,
 		eventRecorder: eventRecorder,
 		signerName:    signerName,
+		metrics:       metricsRecorder,
 	}
 }
 
@@ -70,12 +77,31 @@ func NewRotationManager(k8sClient client.Client, eventRecorder record.EventRecor
 // - result: non-nil if immediate requeue is needed (e.g., Shadow Secret created)
 // - error: actual error that should stop reconciliation
 func (rm *RotationManager) RotateUserCertificate(ctx context.Context, user *authv1alpha1.User, certDuration time.Duration) (bool, *ctrl.Result, error) {
+	start := time.Now()
 	logger := logf.FromContext(ctx)
 	username := user.Name
+
+	// Track concurrent rotations
+	current := atomic.AddInt64(&concurrentRotations, 1)
+	if rm.metrics != nil {
+		rm.metrics.SetConcurrentRotations(int(current))
+		rm.metrics.SetRotationQueueLength(int(current))
+	}
+	defer func() {
+		remaining := atomic.AddInt64(&concurrentRotations, -1)
+		if rm.metrics != nil {
+			rm.metrics.ObserveCertRotationDuration(user.Namespace, time.Since(start))
+			rm.metrics.SetConcurrentRotations(int(remaining))
+			rm.metrics.SetRotationQueueLength(int(remaining))
+		}
+	}()
 
 	// Step 1: Check for existing Shadow Secret (Source of Truth for rotation state)
 	shadowSecret, shadowExists, err := rm.getShadowSecret(ctx, username)
 	if err != nil {
+		if rm.metrics != nil {
+			rm.metrics.RecordRotationError(user.Namespace, username, "shadow_secret_check")
+		}
 		return false, nil, fmt.Errorf("failed to check shadow secret: %w", err)
 	}
 
@@ -187,6 +213,9 @@ func (rm *RotationManager) continueRotationFromShadow(ctx context.Context, user 
 	approved, signedCert, err := rm.ensureCSRApprovedAndGetCert(ctx, csrName)
 	if err != nil {
 		rm.eventRecorder.Event(user, "Warning", "CSRApprovalFailed", fmt.Sprintf("Failed to approve CSR %s: %v", csrName, err))
+		if rm.metrics != nil {
+			rm.metrics.RecordRotationError(user.Namespace, username, "csr_approval")
+		}
 		return statusChanged, nil, fmt.Errorf("failed to ensure CSR approval: %w", err)
 	}
 
@@ -216,6 +245,10 @@ func (rm *RotationManager) continueRotationFromShadow(ctx context.Context, user 
 			Message:   fmt.Sprintf("Atomic flip failed: %v", err),
 			CSRName:   csrName,
 		})
+		if rm.metrics != nil {
+			rm.metrics.RecordRotationError(user.Namespace, username, "atomic_flip")
+			rm.metrics.RecordCertRotation(user.Namespace, username, "failure")
+		}
 		return statusChanged, nil, err
 	}
 
@@ -248,6 +281,15 @@ func (rm *RotationManager) continueRotationFromShadow(ctx context.Context, user 
 		Message:   "Certificate rotation completed successfully",
 		CSRName:   csrName,
 	})
+
+	// Record successful rotation metric
+	if rm.metrics != nil {
+		rm.metrics.RecordCertRotation(user.Namespace, username, "success")
+		// Update cert expiry timestamp
+		if expiry, err := rm.extractCertificateExpiry(signedCert); err == nil {
+			rm.metrics.SetCertExpiry(user.Namespace, username, "client", expiry)
+		}
+	}
 
 	logger.Info("Rotation completed, status changes ready for persistence", "statusChanged", statusChanged)
 	return true, nil, nil // Status was updated successfully

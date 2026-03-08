@@ -37,6 +37,7 @@ import (
 
 	authv1alpha1 "github.com/openkube-hub/KubeUser/api/v1alpha1"
 	"github.com/openkube-hub/KubeUser/internal/controller"
+	"github.com/openkube-hub/KubeUser/internal/controller/metrics"
 	"github.com/openkube-hub/KubeUser/internal/validation"
 	webhookpkg "github.com/openkube-hub/KubeUser/internal/webhook"
 	// +kubebuilder:scaffold:imports
@@ -198,10 +199,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Initialize metrics recorder
+	metricsRecorder := metrics.NewRecorder()
+
 	if err := (&controller.UserReconciler{
 		Client:     mgr.GetClient(),
 		Scheme:     mgr.GetScheme(),
 		SignerName: signerName, // Pass configurable signer for managed K8s support
+		Metrics:    metricsRecorder,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "User")
 		os.Exit(1)

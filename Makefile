@@ -115,7 +115,7 @@ run: manifests generate fmt vet ## Run a controller from your host.
 		echo "Generating webhook certificates for local testing..."; \
 		bash hack/generate-local-certs.sh; \
 	fi
-	go run ./cmd/main.go
+	go run ./cmd/main.go --metrics-bind-address=:8080 --metrics-secure=false
 
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.

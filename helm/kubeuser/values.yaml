@@ -83,7 +83,6 @@ manager:
     - --leader-elect
     - --health-probe-bind-address=:8081
     - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
-    - --metrics-bind-address=:8080
 
 # Webhook configuration
 webhook:
@@ -103,10 +102,43 @@ webhook:
     port: 443
     targetPort: 9443
 metrics:
-  enabled: true
+  # Set to true to expose a metrics Service and configure Prometheus integration.
+  # When false, no metrics Service, ServiceMonitor, or cert-manager resources are created.
+  enabled: false
+  # Serve metrics over HTTPS with authn/authz filtering (recommended for production).
+  # Set to false only for development; also disables TLS in the ServiceMonitor.
+  secure: true
   service:
     type: ClusterIP
-    port: 8080
+    # Use 8443 for HTTPS (default) or 8080 for HTTP (when secure: false).
+    port: 8443
+  # cert-manager TLS for the metrics endpoint.
+  # Mirrors the webhook cert setup — creates a self-signed Issuer and Certificate.
+  # When disabled, controller-runtime auto-generates a self-signed cert (not for production).
+  certManager:
+    enabled: false
+    duration: 8760h
+    renewBefore: 720h
+  # ServiceMonitor for Prometheus Operator scraping.
+  # Requires prometheus-operator (or kube-prometheus-stack) to be installed.
+  serviceMonitor:
+    enabled: false
+    # Namespace to deploy the ServiceMonitor into.
+    # Defaults to the release namespace if not set.
+    namespace: ""
+    # How frequently Prometheus scrapes the metrics endpoint.
+    interval: 30s
+    # Timeout for each scrape request.
+    scrapeTimeout: 10s
+    # Extra labels to add to the ServiceMonitor (e.g. to match a Prometheus instance's serviceMonitorSelector).
+    additionalLabels: {}
+    # Grant the Prometheus ServiceAccount permission to scrape /metrics by binding it
+    # to the metrics-reader ClusterRole. Set both name and namespace to enable.
+    # The ServiceMonitor uses bearerTokenFile (the Prometheus pod's own projected SA token),
+    # so no separate Secret is needed — just provide the SA name here.
+    prometheusServiceAccount:
+      name: ""
+      namespace: ""
 
 # Authentication and renewal defaults
 # These values are injected into the operator via environment variables and

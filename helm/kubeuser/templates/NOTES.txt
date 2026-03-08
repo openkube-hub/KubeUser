@@ -64,6 +64,26 @@
 6. Retrieve the generated kubeconfig:
    kubectl get secret example-user-kubeconfig -o jsonpath='{.data.kubeconfig}' | base64 -d > example-user.kubeconfig
 
+{{- if and .Values.metrics.enabled .Values.metrics.serviceMonitor.enabled }}
+⚠️  Prometheus ServiceMonitor is enabled. Ensure the following:
+
+   1. Prometheus Operator (or kube-prometheus-stack) is installed in your cluster.
+
+   2. The Prometheus ServiceAccount must be granted access to /metrics:
+      Set metrics.serviceMonitor.prometheusServiceAccount.name and .namespace
+      to have a ClusterRoleBinding created automatically.
+      (kube-prometheus-stack default SA: prometheus-k8s in namespace monitoring)
+
+   3. The ServiceMonitor uses the Prometheus pod's own projected SA token
+      (bearerTokenFile) — no extra Secrets are needed.
+
+   {{- if and .Values.metrics.secure (not .Values.metrics.certManager.enabled) }}
+   ⚠️  metrics.certManager.enabled is false — the controller uses an auto-generated
+      self-signed certificate. The ServiceMonitor is configured with
+      insecureSkipVerify: true. Enable metrics.certManager for production.
+   {{- end }}
+{{- end }}
+
 📖 Documentation:
    For more information, visit: https://github.com/openkube-hub/KubeUser
 
