@@ -102,7 +102,9 @@ webhook:
     port: 443
     targetPort: 9443
 metrics:
-  enabled: true
+  # Set to true to expose a metrics Service and configure Prometheus integration.
+  # When false, no metrics Service, ServiceMonitor, or cert-manager resources are created.
+  enabled: false
   # Serve metrics over HTTPS with authn/authz filtering (recommended for production).
   # Set to false only for development; also disables TLS in the ServiceMonitor.
   secure: true

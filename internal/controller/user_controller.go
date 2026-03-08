@@ -654,6 +654,7 @@ func (r *UserReconciler) updateAggregateMetrics(ctx context.Context) {
 		}
 	}
 
+	r.Metrics.ResetUserCounts()
 	for ns, s := range stats {
 		for phase, count := range s.phaseCounts {
 			r.Metrics.SetUserCount(ns, phase, count)

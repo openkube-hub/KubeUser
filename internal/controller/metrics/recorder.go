@@ -24,6 +24,10 @@ func (r *Recorder) RecordRotationError(namespace, user, errorType string) {
 }
 
 // User Tracking
+func (r *Recorder) ResetUserCounts() {
+	UsersTotal.Reset()
+}
+
 func (r *Recorder) SetUserCount(namespace, status string, count float64) {
 	UsersTotal.WithLabelValues(namespace, status).Set(count)
 }
