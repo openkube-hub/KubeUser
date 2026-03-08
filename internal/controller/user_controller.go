@@ -112,7 +112,7 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	// 2. Handle Deletion
 	if !user.DeletionTimestamp.IsZero() {
 		reconcileResult = "deleted"
-		return r.handleDeletion(ctx, &user)
+		return ctrl.Result{}, r.handleDeletion(ctx, &user)
 	}
 
 	// Ensure finalizer
@@ -241,7 +241,7 @@ func (r *UserReconciler) ensureInitialStatus(user *authv1alpha1.User) bool {
 
 // handleDeletion manages the user deletion process including cleanup and finalizer removal.
 // This function gracefully handles etcd race conditions that occur during concurrent deletion reconciliations.
-func (r *UserReconciler) handleDeletion(ctx context.Context, user *authv1alpha1.User) (ctrl.Result, error) {
+func (r *UserReconciler) handleDeletion(ctx context.Context, user *authv1alpha1.User) error {
 	logger := logf.FromContext(ctx)
 	logger.Info("User is being deleted, starting cleanup")
 
@@ -261,13 +261,13 @@ func (r *UserReconciler) handleDeletion(ctx context.Context, user *authv1alpha1.
 			// Case 1: Object already deleted by another reconciliation
 			if client.IgnoreNotFound(err) == nil {
 				logger.Info("Ignoring harmless race condition: user already deleted, finalizer removal not needed")
-				return ctrl.Result{}, nil
+				return nil
 			}
 
 			// Case 2: Optimistic concurrency conflict (ResourceVersion mismatch)
 			if apierrors.IsConflict(err) {
 				logger.Info("Ignoring harmless race condition: conflict removing finalizer, likely already removed by another reconciliation")
-				return ctrl.Result{}, nil
+				return nil
 			}
 
 			// Case 3: etcd precondition failures (UID mismatch during deletion)
@@ -277,18 +277,18 @@ func (r *UserReconciler) handleDeletion(ctx context.Context, user *authv1alpha1.
 				logger.Info("Ignoring harmless race condition: etcd precondition failed during deletion",
 					"error", errMsg,
 					"reason", "Object is being deleted concurrently")
-				return ctrl.Result{}, nil
+				return nil
 			}
 
 			// Only log actual errors that need attention
 			logger.Error(err, "Failed to remove finalizer - unexpected error")
-			return ctrl.Result{}, err
+			return err
 		}
 		logger.Info("Successfully cleaned up and removed finalizer")
 	}
 
 	logger.Info("=== END RECONCILE (DELETION) ===")
-	return ctrl.Result{}, nil
+	return nil
 }
 
 // ensureFinalizer adds the user finalizer if not present.
@@ -631,7 +631,7 @@ func (r *UserReconciler) updateAggregateMetrics(ctx context.Context) {
 		if ns == "" {
 			ns = "cluster"
 		}
-		phase := string(u.Status.Phase)
+		phase := u.Status.Phase
 		if phase == "" {
 			phase = "unknown"
 		}
