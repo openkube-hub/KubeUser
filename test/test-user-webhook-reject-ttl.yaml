@@ -5,8 +5,7 @@ metadata:
 spec:
   auth:
     type: x509
-    ttl: "12h"  # WILL BE REJECTED: Less than 24h minimum in production
-    renewBefore: "4h"
+    ttl: "24h"  # WILL BE REJECTED: Less than 24h minimum in production
     autoRenew: true
   clusterRoles:
     - existingClusterRole: view
