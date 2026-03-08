@@ -1,0 +1,171 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kubeuser-alerts
+  labels:
+    app.kubernetes.io/name: kubeuser
+    app.kubernetes.io/component: controller
+spec:
+  groups:
+  # ---------------------------------------------------------------------------
+  # Certificate Expiry
+  # ---------------------------------------------------------------------------
+  - name: kubeuser.cert_expiry
+    rules:
+    - alert: KubeUserCertExpiringWithin24h
+      expr: kubeuser_certs_expiring_24h > 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "{{ $value }} certificate(s) expiring within 24 hours (namespace={{ $labels.namespace }})"
+        description: >
+          One or more KubeUser-managed certificates are expiring within 24 hours
+          in namespace {{ $labels.namespace }}. Auto-renewal may have failed.
+          Check rotation errors and CSR approval status.
+
+    - alert: KubeUserCertExpiringWithin7d
+      expr: kubeuser_certs_expiring_7d > 0
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: "{{ $value }} certificate(s) expiring within 7 days (namespace={{ $labels.namespace }})"
+        description: >
+          One or more KubeUser-managed certificates are expiring within 7 days
+          in namespace {{ $labels.namespace }}. Verify that auto-renewal is
+          enabled and the controller is healthy.
+
+    - alert: KubeUserCertExpired
+      expr: (kubeuser_cert_expiry_timestamp_seconds - time()) < 0
+      for: 1m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Certificate expired for user {{ $labels.user }} (namespace={{ $labels.namespace }})"
+        description: >
+          The {{ $labels.cert_type }} certificate for user {{ $labels.user }}
+          in namespace {{ $labels.namespace }} has expired. The user's kubeconfig
+          is no longer valid. Immediate rotation is required.
+
+  # ---------------------------------------------------------------------------
+  # Certificate Rotation Errors
+  # ---------------------------------------------------------------------------
+  - name: kubeuser.rotation_errors
+    rules:
+    - alert: KubeUserCertRotationErrors
+      expr: increase(kubeuser_cert_rotation_errors_total[15m]) > 0
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Certificate rotation errors for user {{ $labels.user }} (namespace={{ $labels.namespace }})"
+        description: >
+          Certificate rotation errors of type {{ $labels.error_type }} detected
+          for user {{ $labels.user }} in namespace {{ $labels.namespace }}.
+          Investigate CSR approval, RBAC permissions, and controller logs.
+
+    - alert: KubeUserHighRotationErrorRate
+      expr: >
+        rate(kubeuser_cert_rotation_errors_total[10m]) /
+        (rate(kubeuser_cert_rotations_total[10m]) + 0.001) > 0.1
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "High certificate rotation error rate in namespace {{ $labels.namespace }}"
+        description: >
+          More than 10% of certificate rotations are failing in namespace
+          {{ $labels.namespace }}. This may indicate a systemic issue with
+          CSR signing, cert-manager, or RBAC configuration.
+
+  # ---------------------------------------------------------------------------
+  # User Sync Health
+  # ---------------------------------------------------------------------------
+  - name: kubeuser.sync_health
+    rules:
+    - alert: KubeUserNotSynced
+      expr: kubeuser_user_sync_status == 0
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "User {{ $labels.user }} is not synced (namespace={{ $labels.namespace }})"
+        description: >
+          KubeUser resource {{ $labels.user }} in namespace {{ $labels.namespace }}
+          has been in a non-synced state for more than 10 minutes.
+          Check reconciliation errors and controller logs.
+
+  # ---------------------------------------------------------------------------
+  # Reconciliation Performance
+  # ---------------------------------------------------------------------------
+  - name: kubeuser.reconciliation
+    rules:
+    - alert: KubeUserReconciliationErrors
+      expr: increase(kubeuser_reconciliations_total{result="error"}[5m]) > 5
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Repeated reconciliation errors in controller {{ $labels.controller }}"
+        description: >
+          The {{ $labels.controller }} controller has experienced more than 5
+          reconciliation errors in the last 5 minutes. Inspect controller logs
+          for the root cause.
+
+    - alert: KubeUserReconciliationSlow
+      expr: >
+        histogram_quantile(0.95,
+          rate(kubeuser_reconcile_duration_seconds_bucket[5m])
+        ) > 10
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Slow reconciliation in controller {{ $labels.controller }}"
+        description: >
+          The p95 reconciliation latency for controller {{ $labels.controller }}
+          has exceeded 10 seconds for the past 10 minutes. This may indicate
+          API server pressure or controller resource contention.
+
+    - alert: KubeUserWorkQueueBacklog
+      expr: kubeuser_workqueue_depth > 50
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Work queue backlog in controller {{ $labels.controller }}"
+        description: >
+          The work queue for controller {{ $labels.controller }} has more than
+          50 items pending for 5 minutes. The controller may be overwhelmed
+          or stuck. Consider scaling or investigating slow reconciliations.
+
+  # ---------------------------------------------------------------------------
+  # Thundering Herd / Rotation Throttling
+  # ---------------------------------------------------------------------------
+  - name: kubeuser.thundering_herd
+    rules:
+    - alert: KubeUserRotationThrottling
+      expr: increase(kubeuser_throttled_rotations_total[10m]) > 10
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Certificate rotations are being throttled"
+        description: >
+          More than 10 certificate rotations have been throttled in the last
+          10 minutes to prevent a thundering herd. This is expected during
+          mass renewals but may indicate a large batch of simultaneous expiries.
+          Review TTL spread across User resources.
+
+    - alert: KubeUserHighConcurrentRotations
+      expr: kubeuser_concurrent_rotations > 20
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High number of concurrent certificate rotations"
+        description: >
+          {{ $value }} certificate rotations are running concurrently. This
+          may cause elevated API server load. Check if TTLs are poorly
+          distributed (all expiring at the same time).
