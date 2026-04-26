@@ -8,6 +8,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -69,6 +70,12 @@ type UserReconciler struct {
 // Reconcile orchestrates the user reconciliation process as a pure orchestrator.
 // It implements an idempotent update pattern to minimize etcd writes and prevent infinite loops.
 func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	// Apply a 2-minute budget for one full reconciliation loop. This covers all API operations
+	// including CSR approval, secret writes, and RBAC fan-out, while preventing a single hung
+	// API call from blocking the controller-runtime work queue goroutine indefinitely.
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+
 	start := time.Now()
 	logger := logf.FromContext(ctx)
 	logger.Info("=== START RECONCILE ===", "user", req.Name)
@@ -86,7 +93,7 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		if r.Metrics != nil {
 			r.Metrics.RecordReconciliation("user", reconcileResult, time.Since(start))
 			r.Metrics.SetWorkQueueDepth("user", int(remaining))
-			r.updateAggregateMetrics(ctx)
+			r.updateAggregateMetrics()
 		}
 	}()
 
@@ -312,9 +319,14 @@ func (r *UserReconciler) ensureFinalizer(ctx context.Context, user *authv1alpha1
 func (r *UserReconciler) reconcileRBAC(ctx context.Context, user *authv1alpha1.User) (bool, error) {
 	logger := logf.FromContext(ctx)
 
+	// Phase-level timeout: List + bounded CRUD across namespaces should complete well within 15s.
+	// Derived from the reconcile context so cancellation propagates correctly on shutdown.
+	rbacCtx, rbacCancel := context.WithTimeout(ctx, 15*time.Second)
+	defer rbacCancel()
+
 	// Reconcile RoleBindings
 	logger.Info("Starting RoleBindings reconciliation", "rolesCount", len(user.Spec.Roles))
-	if err := rbac.ReconcileRoleBindings(ctx, r.Client, user); err != nil {
+	if err := rbac.ReconcileRoleBindings(rbacCtx, r.Client, user); err != nil {
 		logger.Error(err, "Failed to reconcile RoleBindings")
 		return false, fmt.Errorf("failed to reconcile RoleBindings: %w", err)
 	}
@@ -322,7 +334,7 @@ func (r *UserReconciler) reconcileRBAC(ctx context.Context, user *authv1alpha1.U
 
 	// Reconcile ClusterRoleBindings
 	logger.Info("Starting ClusterRoleBindings reconciliation", "clusterRolesCount", len(user.Spec.ClusterRoles))
-	if err := rbac.ReconcileClusterRoleBindings(ctx, r.Client, user); err != nil {
+	if err := rbac.ReconcileClusterRoleBindings(rbacCtx, r.Client, user); err != nil {
 		logger.Error(err, "Failed to reconcile ClusterRoleBindings")
 		return false, fmt.Errorf("failed to reconcile ClusterRoleBindings: %w", err)
 	}
@@ -352,6 +364,13 @@ func (r *UserReconciler) reconcileAuthentication(ctx context.Context, user *auth
 	logger := logf.FromContext(ctx)
 	logger.Info("Starting authentication credential processing")
 
+	// Phase-level timeout covering the full cert/rotation call chain:
+	// CSR approval subresource (≤30s) + atomic secret flip (≤30s) + auxiliary Gets ≤ 90s.
+	// Each sub-operation within the chain has its own inner bound (CSR: 30s, atomic flip: 30s),
+	// so this acts as the outer safety net for the combined auth phase.
+	authCtx, authCancel := context.WithTimeout(ctx, 90*time.Second)
+	defer authCancel()
+
 	// Initialize auth manager if needed
 	if r.AuthManager == nil {
 		r.AuthManager = auth.NewManager(r.Client, r.EventRecorder, r.SignerName, r.Metrics)
@@ -363,7 +382,7 @@ func (r *UserReconciler) reconcileAuthentication(ctx context.Context, user *auth
 	oldPhase := user.Status.Phase
 	oldRotationStep := user.Status.RotationStep
 
-	statusChanged, result, err := r.AuthManager.Ensure(ctx, user)
+	statusChanged, result, err := r.AuthManager.Ensure(authCtx, user)
 	if err != nil {
 		// Don't log expected requeue errors as ERROR level
 		if strings.Contains(err.Error(), "requeue needed") {
@@ -471,6 +490,13 @@ func (r *UserReconciler) handleError(ctx context.Context, user *authv1alpha1.Use
 	// Check if this is a known requeue-only error (not a hard failure)
 	if strings.Contains(err.Error(), "requeue needed") {
 		return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
+	}
+
+	// Back off on deadline exceeded to avoid rapid retry storms after a timeout.
+	// Do not propagate the error to controller-runtime to suppress noisy stack traces.
+	if errors.Is(err, context.DeadlineExceeded) {
+		logger.Error(err, "Reconciliation timed out, backing off", "phase", user.Status.Phase)
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
 	logger.Error(err, "Reconciliation failed", "phase", user.Status.Phase)
@@ -610,9 +636,14 @@ func (r *UserReconciler) calculateSmartRequeue(ctx context.Context, user *authv1
 
 // updateAggregateMetrics lists all users and updates cluster-wide gauge metrics.
 // Called at the end of every reconcile via defer so counts stay current after creates/deletes.
-func (r *UserReconciler) updateAggregateMetrics(ctx context.Context) {
+func (r *UserReconciler) updateAggregateMetrics() {
+	// Use a fresh context independent of the reconcile budget: this is a non-critical
+	// background observation and must not fail just because the reconcile context expired.
+	metricsCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	var userList authv1alpha1.UserList
-	if err := r.List(ctx, &userList); err != nil {
+	if err := r.List(metricsCtx, &userList); err != nil {
 		return
 	}
 
