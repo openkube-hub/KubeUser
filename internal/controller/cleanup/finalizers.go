@@ -9,6 +9,7 @@ package cleanup
 import (
 	"context"
 	"fmt"
+	"time"
 
 	authv1alpha1 "github.com/openkube-hub/KubeUser/api/v1alpha1"
 	"github.com/openkube-hub/KubeUser/internal/controller/helpers"
@@ -25,6 +26,11 @@ const (
 
 // CleanupUserResources deletes all resources related to the user.
 func CleanupUserResources(ctx context.Context, r client.Client, user *authv1alpha1.User) {
+	// Finalizer cleanup must complete promptly to unblock the deletion path.
+	// The caller's context may already be bounded; this adds a firm local ceiling.
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
 	username := user.Name
 	userNamespace := helpers.GetKubeUserNamespace()
 

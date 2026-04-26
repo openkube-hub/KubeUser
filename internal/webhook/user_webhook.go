@@ -90,6 +90,11 @@ func (w *UserWebhook) ValidateCreate(ctx context.Context, obj runtime.Object) (a
 		return nil, fmt.Errorf("expected User object, got %T", obj)
 	}
 
+	// Stay well under kube-apiserver's default 10s webhook timeout.
+	// Each Get call in validateRoles/validateClusterRoles must complete within this budget.
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
 	logger := logf.FromContext(ctx).WithName("user-webhook-create")
 	logger.Info("Validating User creation", "user", user.Name)
 
@@ -117,6 +122,10 @@ func (w *UserWebhook) ValidateUpdate(ctx context.Context, oldObj, newObj runtime
 	if !ok {
 		return nil, fmt.Errorf("expected User object, got %T", newObj)
 	}
+
+	// Stay well under kube-apiserver's default 10s webhook timeout.
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 
 	logger := logf.FromContext(ctx).WithName("user-webhook-update")
 	logger.Info("Validating User update", "user", newUser.Name)

@@ -306,7 +306,12 @@ func approveCSR(ctx context.Context, r client.Client, csr *certv1.CertificateSig
 		LastUpdateTime: metav1.Now(),
 	})
 
-	if err := r.SubResource("approval").Update(ctx, csr); err != nil {
+	// CSR approval goes through the signer which may be slow under load; bound this
+	// subresource write independently so a stalled signer does not consume the full reconcile budget.
+	approvalCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	if err := r.SubResource("approval").Update(approvalCtx, csr); err != nil {
 		return fmt.Errorf("failed to approve CSR: %w", err)
 	}
 

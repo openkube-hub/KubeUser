@@ -515,7 +515,12 @@ func (rm *RotationManager) ensureCSRApproved(ctx context.Context, csr *certv1.Ce
 		LastUpdateTime: metav1.Now(),
 	})
 
-	err = rm.client.SubResource("approval").Update(ctx, freshCSR)
+	// CSR approval goes through the signer which may be slow; bound this subresource write
+	// so a stalled signer does not consume the full reconcile budget.
+	approvalCtx, approvalCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer approvalCancel()
+
+	err = rm.client.SubResource("approval").Update(approvalCtx, freshCSR)
 	if err != nil {
 		return false, fmt.Errorf("failed to approve CSR: %w", err)
 	}
@@ -623,6 +628,11 @@ func (rm *RotationManager) createCSRFromKey(username string, keyPEM []byte) ([]b
 
 // atomicSecretUpdate performs zero-downtime secret update with rollback capability
 func (rm *RotationManager) atomicSecretUpdate(ctx context.Context, user *authv1alpha1.User, newKeyPEM, signedCert []byte) error {
+	// Bound the entire atomic flip (2 Get + 2 CreateOrUpdate + 1 rollback path).
+	// All calls are simple etcd writes that should never need more than 30s.
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
 	logger := logf.FromContext(ctx)
 	username := user.Name
 	userNamespace := helpers.GetKubeUserNamespace()
