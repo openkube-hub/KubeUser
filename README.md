@@ -73,28 +73,34 @@ When deleting a User:
 
 #### ✅ Implemented Features
 - [x] **Declarative User CRD**: Complete with status tracking, conditions, and finalizers for clean resource lifecycles.
-- [x] **Hardened Auth Model**: Transitioned to pointer-based API requiring explicit authentication types.
+- [x] **Hardened Auth Model**: Pointer-based API requiring explicit authentication types — no implicit defaults.
 - [x] **Zero-Drift Defaults**: Admission webhooks persist production defaults (TTL/AutoRenew) directly into the User spec.
 - [x] **Automatic Certificate Generation**: Seamless integration with the Kubernetes CSR API for x509 credentials.
-- [x] **Stateful Rotation Engine**: Resumable, multi-step rotation using the **Shadow Secret** pattern for high availability.
+- [x] **Stateful Rotation Engine**: Resumable, multi-step rotation using the **Shadow Secret** pattern — survives controller restarts mid-rotation.
 - [x] **Standardized Renewal Timing**: Renewal is triggered automatically when **33% (1/3)** of the certificate's total lifetime remains (following cert-manager standards).
 - [x] **Configurable Safety Floors**: Enforced **24-hour minimum TTL** and a **90% renewal cap** via Validating Webhooks to prevent aggressive loops.
-- [x] **Guaranteed Lifetime Buffer**: Implemented a mandatory **15-minute safety floor** to ensure certificates remain valid during the final rotation steps and propagation in high-latency clusters.
+- [x] **Guaranteed Lifetime Buffer**: Mandatory **15-minute safety floor** ensures certificates remain valid during final rotation steps and propagation in high-latency clusters.
 - [x] **Managed K8s Support**: Fully configurable CSR signers for EKS, GKE, and vanilla clusters.
-- [x] **Atomic Secret Updates**: Zero-downtime "flip" from old to new credentials only after successful verification.
+- [x] **Atomic Secret Updates**: Zero-downtime "flip" from old to new credentials only after successful verification, with rollback on failure.
 - [x] **Dynamic RBAC Reconciliation**: Automatic management of RoleBindings and ClusterRoleBindings based on CRD spec.
 - [x] **Production-Grade Webhooks**: TLS-secured Mutating and Validating webhooks with cert-manager CA injection.
 - [x] **Helm Environmental Bridge**: Synchronized Helm values with operator logic via environment variable injection.
-- [x] **Basic Observability**: Health probes (8081) and structured logging with controller-runtime.
-- [x] **High Availability**: Leader election enabled by default for multi-replica controller deployments.
-- [x] Prometheus custom metrics for operational visibility
+- [x] **Context Timeouts**: All Kubernetes API operations carry propagated context timeouts, preventing goroutine leaks under API server pressure.
+- [x] **Prometheus Metrics**: Full coverage across certificate rotation (counters, duration histograms, error rates), expiry tracking (per-user timestamp gauge, 24h and 7-day cohort gauges), thundering herd protection (concurrent rotation gauge, throttle counter), and reconciliation performance (p95 latency histogram, error rate counter).
+- [x] **Kubernetes Events**: Structured events emitted for the full renewal lifecycle — start, completion, failure, scheduling, and expiry warnings — surfaced natively via `kubectl describe user`.
+- [x] **Status Conditions**: Standard Kubernetes conditions (`Ready`, `Renewing`, `AutoRenewal`) on every User resource for monitoring integration and operator visibility.
+- [x] **Grafana Dashboard**: Pre-built dashboard (`config/grafana/kubeuser-dashboard.json`) covering certificate lifecycle, user sync health, reconciliation performance, and thundering herd panels — drop-in compatible with kube-prometheus-stack.
+- [x] **PrometheusRule Alerting**: Shipped alert definitions (`config/prometheus/alerts.yaml`) for certificate expiry (critical at 24h, warning at 7d), rotation error rate, reconciliation latency (p95 > 10s), work queue backlog, and concurrent rotation spikes.
+- [x] **Health Probes**: Liveness and readiness probes on port 8081.
 
 #### 🚧 Planned Features
-- [ ] User Groups (UserGroup CRD)
-- [ ] Predefined role templates library
-- [ ] OIDC, LDAP/AD, and SSO integration
-- [ ] Enhanced metrics with Grafana dashboards and Prometheus alerts
-- [ ] CLI tool and Web UI
+- [ ] **x509 Group Membership**: `O=` (Organization) field support in generated certificates to enable RBAC group bindings — required to scale past per-user role assignments without combinatorial RoleBinding sprawl
+- [ ] **Certificate Revocation Notification**: Admission warning and Kubernetes event on User deletion signalling that existing credentials remain cryptographically valid until natural expiry
+- [ ] **Audit Log of Certificate Issuances**: Structured, immutable record of every certificate issuance and rotation event for compliance and forensic workflows
+- [ ] **Short-Lived Certificates (< 24h)**: Sub-24h TTL support for ephemeral, zero-trust access patterns — requires bypassing the current minimum TTL floor
+- [ ] **ECDSA Key Support**: Configurable key algorithm (`ecdsa256`, `ecdsa384`, `rsa2048`, `rsa4096`) via `spec.auth.keyAlgorithm` — ECDSA P-256 provides equivalent security to RSA 2048 with significantly smaller keys and faster signatures
+- [ ] **OpenTelemetry Tracing**: End-to-end distributed traces across the reconcile and rotation paths for latency attribution and CSR signer bottleneck diagnosis
+- [ ] **Predefined Role Templates**: Curated library of reusable role definitions for common access patterns (read-only, developer, deployer)
 
 ## 📦 Installation Instructions
 
@@ -252,7 +258,7 @@ metadata:
   name: alice
 spec:
   auth:
-    type: x509        # REQUIRED: currently only 'x509' is supported (oidc planned)
+    type: x509        # REQUIRED: currently only 'x509' is supported
     ttl: "72h"        # Optional: 3 days (default: 2160h = 3 months)
     autoRenew: false  # Optional: disable auto-renewal (default: true)
   roles:
@@ -389,7 +395,7 @@ spec:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `spec.auth` | `AuthSpec` | **Yes** | Authentication configuration (MANDATORY - cannot be omitted) |
-| `spec.auth.type` | `string` | **Yes** | Authentication method: currently only `x509` supported (MANDATORY - no default). OIDC planned for future. |
+| `spec.auth.type` | `string` | **Yes** | Authentication method: currently only `x509` is supported (MANDATORY - no default). |
 | `spec.auth.ttl` | `string` | No | Certificate lifetime (default: `2160h` = 3 months). Default written by webhook at creation. |
 | `spec.auth.autoRenew` | `boolean` | No | Enable automatic certificate renewal (default: `true`). Default written by webhook at creation. |
 | `spec.auth.renewBefore` | `string` | No | Renew this duration before expiry (overrides 33% rule). Cannot exceed 90% of TTL. |
