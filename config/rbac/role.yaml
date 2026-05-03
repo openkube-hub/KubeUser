@@ -8,10 +8,7 @@ rules:
   - ""
   resources:
   - configmaps
-  - pods
-  - replicasets
   - secrets
-  - serviceaccounts
   verbs:
   - create
   - delete
@@ -36,19 +33,6 @@ rules:
   verbs:
   - get
   - patch
-- apiGroups:
-  - apps
-  resources:
-  - deployments
-  - replicasets
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
 - apiGroups:
   - auth.openkube.io
   resources:
