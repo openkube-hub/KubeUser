@@ -48,9 +48,13 @@ func TestCleanupUserResources_DeletesRotationArtifacts(t *testing.T) {
 		Labels: map[string]string{"auth.openkube.io/user": "bob"},
 	}}
 
+	aliceKey := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "alice-key", Namespace: "kubeuser"}}
+	aliceKubeconfig := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "alice-kubeconfig", Namespace: "kubeuser"}}
+	bobKey := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "bob-key", Namespace: "kubeuser"}}
+
 	cli := fake.NewClientBuilder().
 		WithScheme(newScheme(t)).
-		WithObjects(user, shadow, renewalCSR, otherShadow).
+		WithObjects(user, shadow, renewalCSR, otherShadow, aliceKey, aliceKubeconfig, bobKey).
 		Build()
 
 	CleanupUserResources(context.Background(), cli, user)
@@ -71,6 +75,10 @@ func TestCleanupUserResources_DeletesRotationArtifacts(t *testing.T) {
 
 	mustNotFound("shadow secret", &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "alice-rotation-temp", Namespace: "kubeuser"}})
 	mustNotFound("renewal csr", &certv1.CertificateSigningRequest{ObjectMeta: metav1.ObjectMeta{Name: "alice-renewal-uid12345"}})
+	mustNotFound("alice-key", &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "alice-key", Namespace: "kubeuser"}})
+	mustNotFound("alice-kubeconfig", &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "alice-kubeconfig", Namespace: "kubeuser"}})
+	mustExist("bob-key (different user, must survive)",
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "bob-key", Namespace: "kubeuser"}})
 	mustExist("bob's shadow secret (different user, must survive)",
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "bob-rotation-temp", Namespace: "kubeuser"}})
 }
