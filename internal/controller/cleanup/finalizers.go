@@ -41,16 +41,16 @@ func CleanupUserResources(ctx context.Context, r client.Client, user *authv1alph
 	userNamespace := helpers.GetKubeUserNamespace()
 	selector := client.MatchingLabels{userLabel: username}
 
-	// Delete fixed-name resources (steady-state secrets and initial CSR).
+	// Delete steady-state secrets by name. They aren't labelled at creation,
+	// so the label-selector passes below won't catch them.
 	fixed := []client.Object{
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("%s-key", username), Namespace: userNamespace}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("%s-kubeconfig", username), Namespace: userNamespace}},
-		&certv1.CertificateSigningRequest{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("%s-csr", username)}},
 	}
 	for _, obj := range fixed {
 		if err := r.Delete(ctx, obj); client.IgnoreNotFound(err) != nil {
 			logger.Error(err, "failed to delete fixed resource",
-				"kind", fmt.Sprintf("%T", obj), "name", obj.GetName(), "namespace", obj.GetNamespace())
+				"kind", "Secret", "name", obj.GetName(), "namespace", obj.GetNamespace())
 		}
 	}
 
