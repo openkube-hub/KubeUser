@@ -48,6 +48,11 @@ securityContext:
 # Deployment configuration
 replicaCount: 2
 
+# terminationGracePeriodSeconds is the SIGTERM-to-SIGKILL window kubelet
+# gives the manager to drain. Must exceed the manager's
+# GracefulShutdownTimeout (30s) plus headroom for the leader-lease release.
+terminationGracePeriodSeconds: 45
+
 # Resource limits and requests
 resources:
   limits:
