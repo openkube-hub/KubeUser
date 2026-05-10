@@ -19,24 +19,16 @@ The KubeUser operator includes an admission webhook that validates User resource
 
 ## How it Works
 
-### Validation Webhook
+### Admission Order
 
-1. When a User resource is created or updated, the Kubernetes API server sends an admission review to the webhook
-2. The webhook validates that:
-   - `spec.auth` is provided (MANDATORY - no default)
-   - `spec.auth.type` is provided (MANDATORY - no default)
-   - All referenced Roles exist in their specified namespaces
-   - All referenced ClusterRoles exist
-   - Each role entry has exactly one of `existingRole` or `existingClusterRole` specified
-   - Auth specification is valid (TTL within limits, valid duration format)
-   - TTL is at least 24 hours (production minimum)
-   - Renewal configuration is valid when auto-renewal is enabled
-3. If validation passes, the request proceeds to the mutating webhook
-4. If validation fails, the operation is rejected with a clear error message
+Kubernetes always runs mutating webhooks **before** validating webhooks. KubeUser registers both on the same controller but at separate paths:
+
+1. **Mutating webhook** (`/mutate-auth-openkube-io-v1alpha1-user`) runs first — applies defaults
+2. **Validating webhook** (`/validate-auth-openkube-io-v1alpha1-user`) runs second — rejects invalid resources
 
 ### Mutating Webhook
 
-After validation passes, the mutating webhook applies defaults:
+The mutating webhook applies defaults before validation:
 
 1. **Reads environment variables** from Helm configuration:
    - `KUBEUSER_DEFAULT_TTL` (from `authDefaults.ttl`)
@@ -64,6 +56,21 @@ spec:
     ttl: "2160h"      # Applied from KUBEUSER_DEFAULT_TTL
     autoRenew: true   # Applied from KUBEUSER_DEFAULT_AUTORENEW
 ```
+
+### Validating Webhook
+
+After the mutating webhook sets defaults, the validating webhook checks:
+
+- `spec.auth` is provided (MANDATORY — no default)
+- `spec.auth.type` is provided and is `x509` (OIDC is explicitly rejected — not yet implemented)
+- All referenced Roles exist in their specified namespaces
+- All referenced ClusterRoles exist
+- Each role entry has exactly one of `existingRole` or `existingClusterRole`
+- TTL is at least 24 hours and at most 1 year
+- `renewBefore` does not exceed 90% of TTL and leaves at least 15 minutes of certificate life
+- If validation fails, the operation is rejected with a descriptive error message
+
+The validating webhook uses a **5-second timeout** per request to stay well under the Kubernetes API server's default 10-second webhook timeout.
 
 ## Webhook Certificate Management
 
