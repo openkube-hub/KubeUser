@@ -11,7 +11,7 @@ see [GOVERNANCE.md](./GOVERNANCE.md).
 
 | Name | GitHub | Affiliation |
 |------|--------|-------------|
-| Muhaned Yahya | [@muhaned](https://github.com/muhaned) | Independent |
+| Muhaned Yahya | [@MuhanedYahya](https://github.com/MuhanedYahya) | Independent |
 
 ---
 
