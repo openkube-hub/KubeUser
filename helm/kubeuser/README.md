@@ -4,7 +4,7 @@ This Helm chart deploys the KubeUser operator, a Kubernetes-native user manageme
 
 ## Prerequisites
 
-- Kubernetes 1.20+
+- Kubernetes 1.28+
 - Helm 3.0+
 - Cluster admin permissions
 
@@ -13,8 +13,8 @@ This Helm chart deploys the KubeUser operator, a Kubernetes-native user manageme
 ### Quick Start
 
 ```bash
-# Add the chart repository (if published)
-helm repo add kubeuser https://charts.example.com/kubeuser
+# Add the chart repository
+helm repo add kubeuser https://openkube-hub.github.io/KubeUser
 
 # Install with automatic namespace creation (recommended)
 helm install kubeuser ./helm/kubeuser --create-namespace -n kubeuser
@@ -137,7 +137,7 @@ metadata:
   name: alice
 spec:
   auth:
-    type: x509  # REQUIRED: must be 'x509' or 'oidc'
+    type: x509  # REQUIRED: currently only 'x509' is supported
     ttl: "2160h"  # Optional: defaults to 2160h (90 days)
     autoRenew: true  # Optional: defaults to true
   roles:

@@ -11,7 +11,7 @@ The Auto-Renewal feature provides production-grade automatic certificate renewal
 - **Zero-Downtime**: Atomic secret updates with rollback capability
 - **Stateful Rotation**: Shadow Secret pattern ensures resumable operations
 - **Thundering Herd Prevention**: Jitter-based requeue scheduling (up to 5 minutes)
-- **Short-lived Certificate Support**: Handles certificates as short as 10 minutes
+- **Short-lived Certificate Support**: Handles certificates down to the 24h production minimum; sub-24h supported via `KUBEUSER_MIN_DURATION` override for testing
 - **Comprehensive Observability**: Status conditions, renewal history, and deterministic CSR naming
 
 ## Configuration
@@ -27,7 +27,7 @@ spec:
   auth:
     type: x509        # Default, can be omitted
     ttl: "24h"        # Default is 2160h (3 months)
-    autoRenew: true   # Enable auto-renewal (default: false)
+    autoRenew: true   # Enable auto-renewal (default: true)
 ```
 
 This configuration uses the default 33% rule: the certificate will be renewed when 33% of its lifetime remains (after 16 hours for a 24-hour certificate).
@@ -216,22 +216,22 @@ kubectl get secrets -l auth.openkube.io/rotation=true
 
 ### Certificate Duration
 - **Kubernetes CSR Minimum**: 3 minutes (Kubernetes CSR API requirement)
-- **KubeUser Minimum**: 10 minutes (enforced for practical usability)
-- **Maximum TTL**: 1 year (365 days) - based on Kubernetes controller default `--cluster-signing-duration` flag
+- **KubeUser Minimum**: 24 hours (production default; overridable via `KUBEUSER_MIN_DURATION` env var for testing only)
+- **Maximum TTL**: 1 year (365 days) — based on Kubernetes controller default `--cluster-signing-duration` flag
 - **Default TTL**: 2160h (3 months)
 
 **Note**: The 1-year maximum is the default value set by the Kubernetes controller's `--cluster-signing-duration` flag. This can be changed by cluster administrators, but KubeUser enforces the 1-year limit for consistency and security best practices.
 
 ### Renewal Configuration
-- `autoRenew`: Boolean (default: false)
+- `autoRenew`: Boolean (default: true)
 - `renewBefore`: Must be positive duration if specified
 - `renewBefore`: Cannot exceed 90% of certificate TTL
 - `renewBefore`: Must leave at least 15 minutes of certificate life (fixed safety floor)
 
 ### Duration Constraints
 - **Kubernetes CSR API**: Allows minimum 3 minutes via `expirationSeconds`
-- **KubeUser Production Enforcement**: 24-hour minimum for operational safety
-- **Testing Override**: `KUBEUSER_MIN_DURATION` environment variable (not exposed in Helm)
+- **KubeUser Production Enforcement**: 24-hour minimum for operational safety (hardcoded in `getMinimumDuration()`)
+- **Testing Override**: `KUBEUSER_MIN_DURATION` environment variable can lower the floor for CI/CD (not exposed in Helm)
 - **Maximum Duration**: 1 year (based on default `--cluster-signing-duration` flag)
 - **Cluster Administrator Note**: The maximum can be adjusted by changing the Kubernetes controller's `--cluster-signing-duration` flag, but KubeUser maintains the 1-year limit for security consistency
 
@@ -319,7 +319,7 @@ When `autoRenew` is changed to `false`:
 
 ```bash
 # Check controller logs
-kubectl logs -n kubeuser-system deployment/kubeuser-controller-manager
+kubectl logs -n kubeuser deployment/kubeuser-controller-manager
 
 # List rotation-related resources
 kubectl get secrets -l auth.openkube.io/rotation=true
@@ -359,7 +359,6 @@ kubectl get user alice -o jsonpath='{.status}' | jq .
 ## Future Enhancements
 
 - **Certificate Authority Rotation**: Support for CA certificate updates
-- **External CA Integration**: Support for external certificate authorities  
+- **External CA Integration**: Support for external certificate authorities
 - **Webhook Notifications**: Configurable webhooks for renewal events
-- **Metrics Integration**: Prometheus metrics for renewal monitoring
 - **Advanced Scheduling**: More sophisticated renewal timing algorithms

@@ -65,7 +65,7 @@ Histogram tracking reconciliation loop duration.
 Labels:
 - `controller`: Controller name
 
-Buckets: Exponential from 0.001s (2^15 buckets)
+Buckets: 15 exponential buckets from 0.001s with factor 2 (0.001s → 0.002 → ... → ~16.4s)
 
 #### `kubeuser_workqueue_depth`
 Gauge tracking current work queue depth.
@@ -193,9 +193,9 @@ groups:
 
 ## Grafana Dashboard
 
-A sample Grafana dashboard JSON is available in `config/grafana/dashboard.json` (to be created).
+A pre-built Grafana dashboard is available at `config/grafana/kubeuser-dashboard.json`, compatible with kube-prometheus-stack.
 
-Key panels to include:
+Key panels included:
 - Certificate rotation rate and success rate
 - Rotation duration histogram
 - Active users by namespace

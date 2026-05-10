@@ -4,7 +4,7 @@ This guide shows you how to access and view the Prometheus metrics exposed by Ku
 
 ## Local Development (make run)
 
-When running the controller locally with `make run`, metrics are exposed on `https://localhost:8443/metrics` by default (with self-signed TLS).
+When running the controller locally with `make run`, metrics are exposed on `http://localhost:8080/metrics` (HTTP, no TLS). The `make run` target passes `--metrics-bind-address=:8080 --metrics-secure=false` automatically.
 
 ### Option 1: Using curl (Quick Check)
 
@@ -12,8 +12,8 @@ When running the controller locally with `make run`, metrics are exposed on `htt
 # Run the controller
 make run
 
-# In another terminal, access metrics (skip TLS verification for local dev)
-curl -k https://localhost:8443/metrics
+# In another terminal, access metrics
+curl http://localhost:8080/metrics
 ```
 
 You should see output like:
@@ -33,7 +33,7 @@ If you've deployed the controller to a cluster:
 make deploy
 
 # Port-forward the metrics service
-kubectl port-forward -n kubeuser-system svc/kubeuser-controller-manager-metrics-service 8443:8443
+kubectl port-forward -n kubeuser svc/kubeuser-controller-manager-metrics-service 8443:8443
 
 # In another terminal, access metrics
 curl -k https://localhost:8443/metrics
@@ -136,7 +136,7 @@ make run
 kubectl apply -f config/samples/auth_v1alpha1_user.yaml
 
 # Watch the metrics update
-watch -n 2 'curl -sk https://localhost:8443/metrics | grep kubeuser'
+watch -n 2 'curl -s http://localhost:8080/metrics | grep kubeuser'
 ```
 
 ## Metrics Configuration
@@ -176,13 +176,6 @@ curl http://localhost:8080/metrics
 - Check the metrics port in the logs: look for "Starting metrics server"
 - Verify the port isn't blocked by firewall
 
-### "Certificate verify failed"
-
-Use `-k` flag with curl to skip TLS verification in development:
-```bash
-curl -k https://localhost:8443/metrics
-```
-
 ### No metrics showing up
 
 - Create some User resources to generate metrics
@@ -191,7 +184,7 @@ curl -k https://localhost:8443/metrics
 
 ### Prometheus not scraping
 
-- Check ServiceMonitor is created: `kubectl get servicemonitor -n kubeuser-system`
+- Check ServiceMonitor is created: `kubectl get servicemonitor -n kubeuser`
 - Verify Prometheus has RBAC permissions to scrape the namespace
 - Check Prometheus targets: Prometheus UI → Status → Targets
 
