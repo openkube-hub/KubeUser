@@ -129,7 +129,7 @@ spec:
           API server pressure or controller resource contention.
 
     - alert: KubeUserWorkQueueBacklog
-      expr: kubeuser_workqueue_depth > 50
+      expr: workqueue_depth{name="user"} > 50
       for: 5m
       labels:
         severity: warning
