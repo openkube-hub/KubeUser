@@ -46,10 +46,6 @@ func (r *Recorder) RecordReconciliation(controller, result string, duration time
 	ReconcileDuration.WithLabelValues(controller).Observe(duration.Seconds())
 }
 
-func (r *Recorder) SetWorkQueueDepth(controller string, depth int) {
-	WorkQueueDepth.WithLabelValues(controller).Set(float64(depth))
-}
-
 // Thundering Herd Protection
 func (r *Recorder) SetConcurrentRotations(count int) {
 	ConcurrentRotations.Set(float64(count))
