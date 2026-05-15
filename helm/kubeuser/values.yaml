@@ -43,14 +43,14 @@ securityContext:
   allowPrivilegeEscalation: false
   capabilities:
     drop:
-    - "ALL"
+      - "ALL"
 
 # Deployment configuration
 replicaCount: 2
 
-# terminationGracePeriodSeconds is the SIGTERM-to-SIGKILL window kubelet
-# gives the manager to drain. Must exceed the manager's
-# GracefulShutdownTimeout (30s) plus headroom for the leader-lease release.
+# kubelet's SIGTERM→SIGKILL window. Must exceed manager.gracefulShutdownTimeoutSeconds
+# by at least 5s of headroom for the leader-lease release PATCH.
+# Chart validation in _helpers.tpl enforces this on every install/upgrade.
 terminationGracePeriodSeconds: 45
 
 # Resource limits and requests
@@ -88,7 +88,11 @@ manager:
     - --leader-elect
     - --health-probe-bind-address=:8081
     - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
-
+  # Time the manager waits for in-flight reconciles to finish on SIGTERM
+  # before cancelling their contexts. Surfaced to the binary as
+  # KUBEUSER_GRACEFUL_SHUTDOWN_TIMEOUT. Must be strictly less than
+  # terminationGracePeriodSeconds (chart validation enforces this).
+  gracefulShutdownTimeoutSeconds: 30
 # Webhook configuration
 webhook:
   enabled: true
@@ -154,7 +158,7 @@ authDefaults:
   # Production standard: 2160h (90 days / 3 months)
   # This value is written into User specs that don't explicitly set a TTL
   ttl: "2160h"
-  
+
   # Default auto-renewal behavior
   # Production standard: true (certificates renew automatically before expiry)
   # This value is written into User specs that don't explicitly set autoRenew
@@ -182,11 +186,10 @@ rbac:
   # This must include the signer configured via .Values.signerName.
   signerResourceNames:
     - "kubernetes.io/kube-apiserver-client"
-  
+
 # CRD configuration
 crds:
   install: true
 
 # Common labels (following user preference)
 commonLabels: {}
-
