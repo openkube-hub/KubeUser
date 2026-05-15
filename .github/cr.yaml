@@ -1,6 +1,9 @@
 # chart-releaser configuration
 # https://github.com/helm/chart-releaser
 
+# Release title format — just the version tag (e.g. v0.2.0).
+release-name-template: "v{{ .Version }}"
+
 # Generate release notes automatically from commits since the previous tag.
 generate-release-notes: true
 
