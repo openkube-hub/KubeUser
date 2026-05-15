@@ -66,6 +66,7 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
+	var shutdownGracePeriodFlag time.Duration
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -84,6 +85,9 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.DurationVar(&shutdownGracePeriodFlag, "graceful-shutdown-timeout", 30*time.Second,
+		"Time the manager waits for in-flight reconciles to complete on SIGTERM before "+
+			"cancelling their contexts. Overridden by KUBEUSER_GRACEFUL_SHUTDOWN_TIMEOUT.")
 	opts := zap.Options{}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -174,10 +178,21 @@ func main() {
 		metricsServerOptions.CertName = metricsCertName
 		metricsServerOptions.KeyName = metricsCertKey
 	}
+
 	// On SIGTERM, give in-flight reconciles up to this long to finish cleanly
 	// before their contexts are cancelled. Must stay below the Pod's
-	// terminationGracePeriodSeconds with headroom for the lease release patch.
-	shutdownGracePeriod := 30 * time.Second
+	// terminationGracePeriodSeconds with headroom for the lease-release PATCH.
+	// Precedence: KUBEUSER_GRACEFUL_SHUTDOWN_TIMEOUT > --graceful-shutdown-timeout > 30s default.
+	shutdownGracePeriod := shutdownGracePeriodFlag
+	if v := os.Getenv("KUBEUSER_GRACEFUL_SHUTDOWN_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			shutdownGracePeriod = d
+		} else {
+			setupLog.Error(err, "invalid KUBEUSER_GRACEFUL_SHUTDOWN_TIMEOUT; using flag/default",
+				"value", v, "fallback", shutdownGracePeriod)
+		}
+	}
+	setupLog.Info("graceful shutdown configured", "timeout", shutdownGracePeriod)
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                        scheme,
