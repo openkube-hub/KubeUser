@@ -102,11 +102,12 @@ jobs:
       - name: Initialise gh-pages branch (first run only)
         run: |
           if ! git ls-remote --exit-code origin gh-pages; then
+            ORIG=$(git rev-parse HEAD)
             git checkout --orphan gh-pages
-            git reset --hard
+            git rm -rf . --quiet
             git commit --allow-empty -m "Initialize GitHub Pages"
             git push origin gh-pages
-            git checkout -
+            git checkout "$ORIG"
           fi
 
       - name: Install Helm
