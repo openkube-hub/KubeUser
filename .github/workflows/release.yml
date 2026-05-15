@@ -99,6 +99,16 @@ jobs:
             yq -i ".appVersion = env(VERSION)" helm/kubeuser/Chart.yaml
             yq -i ".image.tag = env(VERSION)" helm/kubeuser/values.yaml
 
+      - name: Initialise gh-pages branch (first run only)
+        run: |
+          if ! git ls-remote --exit-code origin gh-pages; then
+            git checkout --orphan gh-pages
+            git reset --hard
+            git commit --allow-empty -m "Initialize GitHub Pages"
+            git push origin gh-pages
+            git checkout -
+          fi
+
       - name: Install Helm
         uses: azure/setup-helm@v4
 
