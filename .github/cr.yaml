@@ -1,0 +1,11 @@
+# chart-releaser configuration
+# https://github.com/helm/chart-releaser
+
+# Generate release notes automatically from commits since the previous tag.
+generate-release-notes: true
+
+# Push the updated index.yaml to the gh-pages branch after each release.
+push: true
+
+# Skip uploading chart tarballs that already exist in a GitHub Release.
+skip-existing: true
