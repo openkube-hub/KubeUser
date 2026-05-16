@@ -134,11 +134,11 @@ spec:
       labels:
         severity: warning
       annotations:
-        summary: "Work queue backlog in controller {{ $labels.controller }}"
+        summary: "Work queue backlog in user controller"
         description: >
-          The work queue for controller {{ $labels.controller }} has more than
-          50 items pending for 5 minutes. The controller may be overwhelmed
-          or stuck. Consider scaling or investigating slow reconciliations.
+          The user controller work queue has more than 50 items pending for
+          5 minutes. The controller may be overwhelmed or stuck. Consider
+          scaling or investigating slow reconciliations.
 
   # ---------------------------------------------------------------------------
   # Thundering Herd / Rotation Throttling
