@@ -9,3 +9,8 @@ push: true
 
 # Skip uploading chart tarballs that already exist in a GitHub Release.
 skip-existing: true
+
+# Do not mark the chart release as "latest" — the v* code release should be latest.
+# This avoids GitHub briefly locking the release during "make latest" processing,
+# which causes 422 "Cannot upload assets to an immutable release" on the asset upload.
+make-release-latest: false
