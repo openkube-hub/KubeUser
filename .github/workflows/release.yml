@@ -4,78 +4,123 @@ on:
   push:
     tags:
       - "v*.*.*"   # trigger on semantic version tags like v0.1.0
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v0.2.0)"
+        required: true
+
+# Deny all permissions by default; each job grants only what it needs.
+permissions: {}
+
+# One release at a time — never cancel an in-flight release.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
 
 jobs:
-  release:
+  # --------------------------------------------------
+  # Job 1: Build and push controller image to GHCR
+  # --------------------------------------------------
+  release-controller:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: read
+      packages: write   # push to GHCR with built-in GITHUB_TOKEN
+
     steps:
-      # --------------------------
-      # Checkout repo
-      # --------------------------
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
-      # --------------------------
-      # Set version from tag
-      # --------------------------
-      - name: Set VERSION
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
+      - name: Set VERSION and image name
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "VERSION=${TAG#v}" >> $GITHUB_ENV
+          echo "IMAGE_NAME=$(echo '${{ github.repository_owner }}/kubeuser-controller' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
-      # --------------------------
-      # Build & push controller Docker image
-      # --------------------------
       - name: Log in to GHCR
-        run: echo "${{ secrets.ACTION_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push controller
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push controller image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # --------------------------------------------------
+  # Job 2: Package and release Helm chart
+  # Uses chart-releaser-action — stores each chart version
+  # as a GitHub Release asset, preserving full history.
+  # --------------------------------------------------
+  release-chart:
+    runs-on: ubuntu-latest
+    needs: release-controller
+
+    permissions:
+      contents: write   # create GitHub Releases and push to gh-pages
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # required by chart-releaser to compare versions
+
+      - name: Configure Git
         run: |
-          docker build -t ghcr.io/${{ github.repository_owner }}/kubeuser-controller:${VERSION} .
-          docker push ghcr.io/${{ github.repository_owner }}/kubeuser-controller:${VERSION}
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
 
-      # --------------------------
-      # Install Helm and yq
-      # --------------------------
-      - name: Install Helm and yq
+      - name: Set VERSION from tag
         run: |
-          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-          sudo apt-get update
-          sudo apt-get install -y jq
-          sudo snap install yq
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "VERSION=${TAG#v}" >> $GITHUB_ENV
 
-      # --------------------------
-      # Update Helm chart versions
-      # --------------------------
-      - name: Update Chart.yaml and values.yaml
+      - name: Update chart version
+        uses: mikefarah/yq@v4
+        with:
+          cmd: |
+            yq -i ".version = env(VERSION)" helm/kubeuser/Chart.yaml
+            yq -i ".appVersion = env(VERSION)" helm/kubeuser/Chart.yaml
+            yq -i ".image.tag = env(VERSION)" helm/kubeuser/values.yaml
+
+      - name: Initialise gh-pages branch (first run only)
         run: |
-          yq -i ".version = env(VERSION)" helm/kubeuser/Chart.yaml
-          yq -i ".appVersion = env(VERSION)" helm/kubeuser/Chart.yaml
-          yq -i ".image.tag = env(VERSION)" helm/kubeuser/values.yaml
-
-      # --------------------------
-      # Package Helm chart
-      # --------------------------
-      - name: Package Helm chart
-        run: helm package helm/kubeuser -d charts-dist
-
-      # --------------------------
-      # Update Helm repository index
-      # --------------------------
-      - name: Update Helm repo index
-        run: |
-          mkdir -p charts-dist
-          if [ -f charts-dist/index.yaml ]; then
-            helm repo index charts-dist --merge charts-dist/index.yaml --url https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
-          else
-            helm repo index charts-dist --url https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+          if ! git ls-remote --exit-code origin gh-pages; then
+            ORIG=$(git rev-parse HEAD)
+            git checkout --orphan gh-pages
+            git rm -rf . --quiet
+            git commit --allow-empty -m "Initialize GitHub Pages"
+            git push origin gh-pages
+            git checkout "$ORIG"
           fi
 
-      # --------------------------
-      # Publish only Helm artifacts to gh-pages
-      # --------------------------
-      - name: Publish Helm charts to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Lint chart
+        run: helm lint helm/kubeuser
+
+      - name: Run chart-releaser
+        uses: helm/chart-releaser-action@v1.6.0
         with:
-          github_token: ${{ secrets.ACTION_PAT }}
-          publish_branch: gh-pages
-          publish_dir: charts-dist
+          charts_dir: helm
+          config: .github/cr.yaml
+          skip_existing: true   # safe to re-run — skips already released versions
+        env:
+          CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
