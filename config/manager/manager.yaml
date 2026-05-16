@@ -124,4 +124,6 @@ spec:
       - name: tmp-dir
         emptyDir: {}
       serviceAccountName: controller-manager
-      terminationGracePeriodSeconds: 10
+      # Must exceed the manager's GracefulShutdownTimeout (30s) plus headroom
+      # for the lease-release PATCH and any straggling API calls.
+      terminationGracePeriodSeconds: 45

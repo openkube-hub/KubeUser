@@ -91,3 +91,22 @@ Create image name
 {{- printf "%s:%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion) }}
 {{- end }}
 
+{{/*
+Validate that terminationGracePeriodSeconds leaves at least 5 seconds of
+headroom above manager.gracefulShutdownTimeoutSeconds. Headroom covers the
+leader-lease release PATCH and any straggling API calls on the way out.
+
+Called from templates/deployment.yaml — fails the install/upgrade with a
+descriptive message instead of silently producing a Pod kubelet will
+SIGKILL mid-drain.
+*/}}
+{{- define "kubeuser.validateGracePeriod" -}}
+{{- $grace := int .Values.terminationGracePeriodSeconds -}}
+{{- $drain := int .Values.manager.gracefulShutdownTimeoutSeconds -}}
+{{- if le $grace $drain -}}
+{{- fail (printf "terminationGracePeriodSeconds (%d) must be strictly greater than manager.gracefulShutdownTimeoutSeconds (%d). Recommended: %d." $grace $drain (add $drain 15)) -}}
+{{- end -}}
+{{- if lt (sub $grace $drain) 5 -}}
+{{- fail (printf "terminationGracePeriodSeconds (%d) must exceed manager.gracefulShutdownTimeoutSeconds (%d) by at least 5s for the lease-release PATCH. Recommended: %d." $grace $drain (add $drain 15)) -}}
+{{- end -}}
+{{- end -}}

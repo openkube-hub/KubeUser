@@ -904,13 +904,13 @@
         "tooltip": { "mode": "multi", "sort": "desc" }
       },
       "title": "Work Queue Depth",
-      "description": "Number of items pending in the controller work queue per controller. Sustained high depth indicates reconciliation backlog.",
+      "description": "Number of items waiting in the controller work queue. Sustained high depth indicates reconciliation backlog. Exposed by controller-runtime as workqueue_depth.",
       "type": "timeseries",
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "kubeuser_workqueue_depth{controller=~\"$controller\"}",
-          "legendFormat": "{{controller}}",
+          "expr": "workqueue_depth{name=~\"$controller\"}",
+          "legendFormat": "{{name}}",
           "refId": "A"
         }
       ]

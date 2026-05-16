@@ -67,11 +67,13 @@ Labels:
 
 Buckets: 15 exponential buckets from 0.001s with factor 2 (0.001s → 0.002 → ... → ~16.4s)
 
-#### `kubeuser_workqueue_depth`
-Gauge tracking current work queue depth.
+#### `workqueue_depth` _(controller-runtime built-in)_
+Gauge tracking the number of items waiting in the controller work queue (i.e., reconciliation backlog).
 
 Labels:
-- `controller`: Controller name
+- `name`: Controller queue name (e.g., `user`)
+
+> **Note:** `kubeuser_workqueue_depth` was removed. Use `workqueue_depth{name="user"}` as the practical replacement — it tracks reconciliation backlog, which is the actionable signal for SRE monitoring and alerting. `controller_runtime_active_workers{controller="user"}` is also exposed automatically but is bounded by `MaxConcurrentReconciles` (default `1`), so it's only meaningful when concurrency is tuned up.
 
 ### Thundering Herd Protection
 

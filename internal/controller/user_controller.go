@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	authv1alpha1 "github.com/openkube-hub/KubeUser/api/v1alpha1"
@@ -31,9 +30,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
-
-// activeReconcileCount tracks how many reconcile goroutines are running concurrently.
-var activeReconcileCount int64
 
 // UserReconciler reconciles a User object
 type UserReconciler struct {
@@ -70,6 +66,12 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	// Apply a 2-minute budget for one full reconciliation loop. This covers all API operations
 	// including CSR approval, secret writes, and RBAC fan-out, while preventing a single hung
 	// API call from blocking the controller-runtime work queue goroutine indefinitely.
+	//
+	// During manager shutdown the effective budget becomes
+	// min(2*time.Minute, GracefulShutdownTimeout). A reconcile that started just before SIGTERM
+	// may be cancelled at the shorter drain ceiling rather than the 2-minute budget. The Shadow
+	// Secret recovery pattern (renewal/rotation.go:99) resumes from a checkpointed shadow on the
+	// next leader, so any cancelled rotation is safely recovered.
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
@@ -77,19 +79,11 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	logger := logf.FromContext(ctx)
 	logger.Info("=== START RECONCILE ===", "user", req.Name)
 
-	// Track active reconcile goroutines as a proxy for work queue depth
-	active := atomic.AddInt64(&activeReconcileCount, 1)
-	if r.Metrics != nil {
-		r.Metrics.SetWorkQueueDepth("user", int(active))
-	}
-
 	// Track reconciliation result for metrics
 	var reconcileResult string
 	defer func() {
-		remaining := atomic.AddInt64(&activeReconcileCount, -1)
 		if r.Metrics != nil {
 			r.Metrics.RecordReconciliation("user", reconcileResult, time.Since(start))
-			r.Metrics.SetWorkQueueDepth("user", int(remaining))
 			r.updateAggregateMetrics()
 		}
 	}()

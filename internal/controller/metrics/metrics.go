@@ -67,14 +67,6 @@ var (
 		[]string{"controller"},
 	)
 
-	WorkQueueDepth = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "kubeuser_workqueue_depth",
-			Help: "Current depth of work queue",
-		},
-		[]string{"controller"},
-	)
-
 	// Admission Safety (Thundering Herd)
 	ConcurrentRotations = prometheus.NewGauge(
 		prometheus.GaugeOpts{
@@ -133,7 +125,6 @@ func init() {
 		UserSyncStatus,
 		ReconciliationsTotal,
 		ReconcileDuration,
-		WorkQueueDepth,
 		ConcurrentRotations,
 		RotationQueueLength,
 		ThrottledRotations,

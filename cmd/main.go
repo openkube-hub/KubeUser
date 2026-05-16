@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -65,6 +66,16 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
+	// Env var sets the default for --graceful-shutdown-timeout so the flag always wins
+	// (standard Kubernetes controller convention: flag > env > hardcoded default).
+	shutdownGracePeriodDefault := 30 * time.Second
+	if v := os.Getenv("KUBEUSER_GRACEFUL_SHUTDOWN_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			shutdownGracePeriodDefault = d
+		}
+		// Invalid values are silently ignored here; the flag default (30s) applies.
+	}
+	var shutdownGracePeriodFlag time.Duration
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -83,6 +94,11 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.DurationVar(&shutdownGracePeriodFlag, "graceful-shutdown-timeout", shutdownGracePeriodDefault,
+		"Maximum time the manager waits for runnables (controllers, webhooks) to stop "+
+			"after their contexts are cancelled on SIGTERM. Defers in Reconcile() run within "+
+			"this window. Defaults to KUBEUSER_GRACEFUL_SHUTDOWN_TIMEOUT env var, or 30s if "+
+			"unset. Explicit flag always takes precedence.")
 	opts := zap.Options{}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -174,24 +190,22 @@ func main() {
 		metricsServerOptions.KeyName = metricsCertKey
 	}
 
+	// shutdownGracePeriodFlag already reflects the correct precedence:
+	// --graceful-shutdown-timeout (explicit) > KUBEUSER_GRACEFUL_SHUTDOWN_TIMEOUT (env) > 30s default.
+	// The env var was applied as the flag default before flag.Parse(), so the parsed flag value is
+	// always authoritative — no further conditional logic needed.
+	shutdownGracePeriod := shutdownGracePeriodFlag
+	setupLog.Info("graceful shutdown configured", "timeout", shutdownGracePeriod)
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:                 scheme,
-		Metrics:                metricsServerOptions,
-		WebhookServer:          webhookServer,
-		HealthProbeBindAddress: probeAddr,
-		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "01049f18.openkube.io",
-		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
-		// when the Manager ends. This requires the binary to immediately end when the
-		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
-		// speeds up voluntary leader transitions as the new leader don't have to wait
-		// LeaseDuration time first.
-		//
-		// In the default scaffold provided, the program ends immediately after
-		// the manager stops, so would be fine to enable this option. However,
-		// if you are doing or is intended to do any operation such as perform cleanups
-		// after the manager stops then its usage might be unsafe.
-		// LeaderElectionReleaseOnCancel: true,
+		Scheme:                        scheme,
+		Metrics:                       metricsServerOptions,
+		WebhookServer:                 webhookServer,
+		HealthProbeBindAddress:        probeAddr,
+		LeaderElection:                enableLeaderElection,
+		LeaderElectionID:              "01049f18.openkube.io",
+		LeaderElectionReleaseOnCancel: true,
+		GracefulShutdownTimeout:       &shutdownGracePeriod,
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")

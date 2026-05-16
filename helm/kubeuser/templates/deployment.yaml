@@ -1,3 +1,5 @@
+{{- include "kubeuser.validateGracePeriod" . -}}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -61,6 +63,8 @@ spec:
           value: {{ .Values.authDefaults.ttl | quote }}
         - name: KUBEUSER_DEFAULT_AUTORENEW
           value: {{ .Values.authDefaults.autoRenew | quote }}
+        - name: KUBEUSER_GRACEFUL_SHUTDOWN_TIMEOUT
+          value: "{{ .Values.manager.gracefulShutdownTimeoutSeconds }}s"
         {{- with .Values.env }}
         {{- range $key, $value := . }}
         - name: {{ $key }}
@@ -122,4 +126,6 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      terminationGracePeriodSeconds: 10
+      # Must exceed the manager's GracefulShutdownTimeout (30s) plus headroom
+      # for the lease-release PATCH and any straggling API calls.
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
