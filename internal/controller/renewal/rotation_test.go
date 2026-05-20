@@ -84,10 +84,12 @@ func TestRotationManager_IsRotationInProgress(t *testing.T) {
 						"auth.openkube.io/rotation": "true",
 						"auth.openkube.io/shadow":   "true",
 					},
+					Annotations: map[string]string{
+						authv1alpha1.CSRNameAnnotation: "bob-renewal-12345678",
+					},
 				},
 				Data: map[string][]byte{
-					"key.pem":  []byte("fake-key"),
-					"csr.name": []byte("bob-renewal-12345678"),
+					"key.pem": []byte("fake-key"),
 				},
 			},
 			wantInProgress: true,
@@ -351,5 +353,50 @@ func TestRotationManager_validateCSRForApproval(t *testing.T) {
 				t.Errorf("validateCSRForApproval() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestRotationManager_IsRotationInProgress_RoundTripsCSRName is the regression
+// guard for the silent CSR-name drift bug. createShadowSecretForRotation writes
+// the CSR name to annotations; IsRotationInProgress must read from the same
+// place. The test deliberately uses both production code paths — any future
+// asymmetry in field or key fails the assertion loudly.
+func TestRotationManager_IsRotationInProgress_RoundTripsCSRName(t *testing.T) {
+	t.Setenv("KUBEUSER_NAMESPACE", "kubeuser")
+
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("scheme: %v", err)
+	}
+
+	cli := fake.NewClientBuilder().WithScheme(scheme).Build()
+	rm := NewRotationManager(cli, nil, "kubernetes.io/kube-apiserver-client", nil)
+
+	user := &authv1alpha1.User{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "alice",
+			UID:  "12345678-1234-1234-1234-123456789012",
+		},
+	}
+
+	// Production WRITE path.
+	if err := rm.createShadowSecretForRotation(context.Background(), user); err != nil {
+		t.Fatalf("createShadowSecretForRotation: %v", err)
+	}
+
+	// Production READ path.
+	inProgress, csrName, err := rm.IsRotationInProgress(context.Background(), user.Name)
+	if err != nil {
+		t.Fatalf("IsRotationInProgress: %v", err)
+	}
+	if !inProgress {
+		t.Fatalf("expected rotation in progress = true, got false")
+	}
+	if csrName == "" {
+		t.Fatalf("CSR name came back empty — writer and reader are using different field or key")
+	}
+	// generateUniqueCSRName is deterministic for (alice, 12345678-...).
+	if want := "alice-renewal-12345678"; csrName != want {
+		t.Errorf("CSR name round trip = %q, want %q", csrName, want)
 	}
 }
