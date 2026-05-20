@@ -157,7 +157,7 @@ func (rm *RotationManager) continueRotationFromShadow(ctx context.Context, user 
 	username := user.Name
 
 	// Extract rotation metadata from Shadow Secret
-	csrName, exists := shadowSecret.Annotations["auth.openkube.io/csr-name"]
+	csrName, exists := shadowSecret.Annotations[authv1alpha1.CSRNameAnnotation]
 	if !exists {
 		logger.Error(nil, "Shadow Secret missing CSR name annotation - non-recoverable, cleaning up", "shadowSecret", shadowSecret.Name)
 		rm.eventRecorder.Event(user, "Warning", "RotationCorrupted", "Shadow Secret missing CSR annotation, resetting rotation state")
@@ -375,7 +375,7 @@ func (rm *RotationManager) createShadowSecretForRotation(ctx context.Context, us
 				"auth.openkube.io/shadow":   "true",
 			},
 			Annotations: map[string]string{
-				"auth.openkube.io/csr-name": csrName,
+				authv1alpha1.CSRNameAnnotation: csrName,
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
@@ -835,7 +835,7 @@ func (rm *RotationManager) IsRotationInProgress(ctx context.Context, username st
 		return false, "", nil
 	}
 
-	csrName := string(shadowSecret.Data["csr.name"])
+	csrName := shadowSecret.Annotations[authv1alpha1.CSRNameAnnotation]
 	return true, csrName, nil
 }
 
