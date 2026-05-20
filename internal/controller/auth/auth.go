@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	authv1alpha1 "github.com/openkube-hub/KubeUser/api/v1alpha1"
@@ -121,6 +122,16 @@ func (m *Manager) getProvider(user *authv1alpha1.User) (Provider, error) {
 // ValidateAuthSpec validates the auth specification for the user
 // MANDATORY IDENTITY: Enforces explicit authentication type specification
 func ValidateAuthSpec(user *authv1alpha1.User) error {
+	// SECURITY: Reject usernames with 'system:' prefix to prevent CN spoofing.
+	// Kubernetes reserves the 'system:' prefix for built-in identities (e.g.,
+	// system:kube-controller-manager, system:serviceaccount:...). Allowing user
+	// resources with this prefix would generate X.509 certificates whose Subject
+	// CN matches a privileged identity, enabling privilege escalation via CN
+	// spoofing.
+	if strings.HasPrefix(user.Name, "system:") {
+		return fmt.Errorf("username %q is invalid: the 'system:' prefix is reserved for Kubernetes built-in identities and cannot be used to prevent certificate CN spoofing", user.Name)
+	}
+
 	// MANDATORY IDENTITY ENFORCEMENT: Auth must be non-nil
 	if user.Spec.Auth == nil {
 		return fmt.Errorf("authentication section is mandatory: spec.auth must be specified")
