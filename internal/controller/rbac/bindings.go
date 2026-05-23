@@ -27,7 +27,7 @@ func ReconcileRoleBindings(ctx context.Context, r client.Client, user *authv1alp
 
 	// Get all existing RoleBindings for this user
 	var existingRBs rbacv1.RoleBindingList
-	if err := r.List(ctx, &existingRBs, client.MatchingLabels{"auth.openkube.io/user": username}); err != nil {
+	if err := r.List(ctx, &existingRBs, client.MatchingLabels{authv1alpha1.UserLabel: username}); err != nil {
 		return fmt.Errorf("failed to list existing RoleBindings: %w", err)
 	}
 
@@ -92,9 +92,9 @@ func ReconcileRoleBindings(ctx context.Context, r client.Client, user *authv1alp
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      rbName,
 				Namespace: roleSpec.Namespace,
-				Labels:    map[string]string{"auth.openkube.io/user": username},
+				Labels:    map[string]string{authv1alpha1.UserLabel: username},
 				OwnerReferences: []metav1.OwnerReference{{
-					APIVersion: "auth.openkube.io/v1alpha1",
+					APIVersion: authv1alpha1.GroupVersion.String(),
 					Kind:       "User",
 					Name:       user.Name,
 					UID:        user.UID,
@@ -150,7 +150,7 @@ func ReconcileClusterRoleBindings(ctx context.Context, r client.Client, user *au
 
 	// Get all existing ClusterRoleBindings for this user
 	var existingCRBs rbacv1.ClusterRoleBindingList
-	if err := r.List(ctx, &existingCRBs, client.MatchingLabels{"auth.openkube.io/user": username}); err != nil {
+	if err := r.List(ctx, &existingCRBs, client.MatchingLabels{authv1alpha1.UserLabel: username}); err != nil {
 		return fmt.Errorf("failed to list existing ClusterRoleBindings: %w", err)
 	}
 
@@ -181,9 +181,9 @@ func ReconcileClusterRoleBindings(ctx context.Context, r client.Client, user *au
 		desiredCRB := &rbacv1.ClusterRoleBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   crbName,
-				Labels: map[string]string{"auth.openkube.io/user": username},
+				Labels: map[string]string{authv1alpha1.UserLabel: username},
 				OwnerReferences: []metav1.OwnerReference{{
-					APIVersion: "auth.openkube.io/v1alpha1",
+					APIVersion: authv1alpha1.GroupVersion.String(),
 					Kind:       "User",
 					Name:       user.Name,
 					UID:        user.UID,
