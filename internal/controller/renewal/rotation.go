@@ -370,9 +370,9 @@ func (rm *RotationManager) createShadowSecretForRotation(ctx context.Context, us
 			Name:      shadowSecretName,
 			Namespace: userNamespace,
 			Labels: map[string]string{
-				"auth.openkube.io/user":     username,
-				"auth.openkube.io/rotation": "true",
-				"auth.openkube.io/shadow":   "true",
+				authv1alpha1.UserLabel:     username,
+				authv1alpha1.RotationLabel: "true",
+				authv1alpha1.ShadowLabel:   "true",
 			},
 			Annotations: map[string]string{
 				authv1alpha1.CSRNameAnnotation: csrName,
@@ -445,9 +445,9 @@ func (rm *RotationManager) ensureCSRExists(ctx context.Context, user *authv1alph
 		ObjectMeta: metav1.ObjectMeta{
 			Name: csrName,
 			Labels: map[string]string{
-				"auth.openkube.io/user":     username,
-				"auth.openkube.io/renewal":  "true",
-				"auth.openkube.io/rotation": "true",
+				authv1alpha1.UserLabel:     username,
+				authv1alpha1.RenewalLabel:  "true",
+				authv1alpha1.RotationLabel: "true",
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
@@ -899,11 +899,11 @@ func (rm *RotationManager) validateCSRForApproval(csr *certv1.CertificateSigning
 		return fmt.Errorf("missing required labels")
 	}
 
-	if csr.Labels["auth.openkube.io/renewal"] != "true" {
+	if csr.Labels[authv1alpha1.RenewalLabel] != "true" {
 		return fmt.Errorf("missing or invalid renewal label")
 	}
 
-	if csr.Labels["auth.openkube.io/rotation"] != "true" {
+	if csr.Labels[authv1alpha1.RotationLabel] != "true" {
 		return fmt.Errorf("missing or invalid rotation label")
 	}
 
@@ -919,7 +919,7 @@ func (rm *RotationManager) validateCSRForApproval(csr *certv1.CertificateSigning
 	}
 
 	// Validate common name matches expected user
-	expectedUsername := csr.Labels["auth.openkube.io/user"]
+	expectedUsername := csr.Labels[authv1alpha1.UserLabel]
 	if csrReq.Subject.CommonName != expectedUsername {
 		return fmt.Errorf("CSR common name %s doesn't match expected user %s", csrReq.Subject.CommonName, expectedUsername)
 	}
