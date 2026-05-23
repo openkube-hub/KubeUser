@@ -243,7 +243,7 @@ func (r *UserReconciler) handleDeletion(ctx context.Context, user *authv1alpha1.
 	logger := logf.FromContext(ctx)
 	logger.Info("User is being deleted, starting cleanup")
 
-	if helpers.ContainsString(user.Finalizers, cleanup.UserFinalizer) {
+	if helpers.ContainsString(user.Finalizers, authv1alpha1.UserFinalizer) {
 		// Step 1: Clean up all user resources BEFORE removing finalizer
 		// This ensures cleanup is complete even if finalizer removal fails
 		logger.Info("Cleaning up user resources")
@@ -251,7 +251,7 @@ func (r *UserReconciler) handleDeletion(ctx context.Context, user *authv1alpha1.
 
 		// Step 2: Remove finalizer as the absolute last step
 		logger.Info("Removing finalizer")
-		user.Finalizers = helpers.RemoveString(user.Finalizers, cleanup.UserFinalizer)
+		user.Finalizers = helpers.RemoveString(user.Finalizers, authv1alpha1.UserFinalizer)
 		if err := r.Update(ctx, user); err != nil {
 			// Handle harmless race conditions that occur during concurrent deletion reconciliations
 			// These are expected and should not trigger error alerts in observability systems
@@ -293,9 +293,9 @@ func (r *UserReconciler) handleDeletion(ctx context.Context, user *authv1alpha1.
 func (r *UserReconciler) ensureFinalizer(ctx context.Context, user *authv1alpha1.User) error {
 	logger := logf.FromContext(ctx)
 
-	if !helpers.ContainsString(user.Finalizers, cleanup.UserFinalizer) {
-		logger.Info("Adding finalizer", "finalizer", cleanup.UserFinalizer)
-		user.Finalizers = append(user.Finalizers, cleanup.UserFinalizer)
+	if !helpers.ContainsString(user.Finalizers, authv1alpha1.UserFinalizer) {
+		logger.Info("Adding finalizer", "finalizer", authv1alpha1.UserFinalizer)
+		user.Finalizers = append(user.Finalizers, authv1alpha1.UserFinalizer)
 		if err := r.Update(ctx, user); err != nil {
 			logger.Error(err, "Failed to add finalizer")
 			return err
