@@ -5,6 +5,7 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 [![Tests](https://github.com/openkube-hub/KubeUser/actions/workflows/test.yml/badge.svg)](https://github.com/openkube-hub/KubeUser/actions/workflows/test.yml)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/openkube-hub/KubeUser)](./go.mod)
+[![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/kubeuser)](https://artifacthub.io/packages/search?repo=kubeuser)
 
 KubeUser is a Kubernetes-native way to manage users, certificates, RBAC, and kubeconfigs declaratively — without running an external identity provider.
 
