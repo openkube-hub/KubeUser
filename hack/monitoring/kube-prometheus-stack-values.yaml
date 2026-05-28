@@ -1,0 +1,122 @@
+# kube-prometheus-stack — homelab values
+# Chart: prometheus-community/kube-prometheus-stack 82.15.1 (app v0.89.0)
+# Tuned for single-node / kind homelab: minimal replicas, small resources.
+
+# ── Grafana ────────────────────────────────────────────────────────────────────
+grafana:
+  enabled: true
+  adminUser: admin
+  adminPassword: admin
+
+  replicas: 1
+
+  # Sidecar watches ConfigMaps/Secrets labelled grafana_dashboard=1 across all
+  # namespaces and hot-reloads them into Grafana without a restart.
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL
+      folderAnnotation: grafana_folder
+      provider:
+        foldersFromFilesStructure: false
+        allowUiUpdates: true
+
+  # Persist dashboards/plugins across pod restarts (optional but handy).
+  persistence:
+    enabled: false        # flip to true if you have a StorageClass available
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+# ── Prometheus ─────────────────────────────────────────────────────────────────
+prometheus:
+  prometheusSpec:
+    replicas: 1
+    retention: 7d
+    retentionSize: "4GB"
+
+    # Pick up all ServiceMonitors / PodMonitors in the cluster regardless of
+    # which Helm release created them (handy for kubeuser operator monitors).
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        memory: 1Gi
+
+    storageSpec: {}       # ephemeral by default; set a volumeClaimTemplate here
+                          # if you want persistent metrics storage
+
+# ── Alertmanager ──────────────────────────────────────────────────────────────
+alertmanager:
+  enabled: true
+  alertmanagerSpec:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        memory: 64Mi
+
+# ── Prometheus Operator ────────────────────────────────────────────────────────
+prometheusOperator:
+  admissionWebhooks:
+    enabled: true
+    patch:
+      enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 128Mi
+
+# ── kube-state-metrics ────────────────────────────────────────────────────────
+kube-state-metrics:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 64Mi
+
+# ── node-exporter ─────────────────────────────────────────────────────────────
+prometheus-node-exporter:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 64Mi
+
+# ── Default scrape rules ───────────────────────────────────────────────────────
+defaultRules:
+  create: true
+
+# ── Component monitors (all enabled by default, listed for clarity) ────────────
+kubeApiServer:
+  enabled: true
+kubeControllerManager:
+  enabled: true
+kubeScheduler:
+  enabled: true
+kubeEtcd:
+  enabled: true
+kubelet:
+  enabled: true
+kubeProxy:
+  enabled: true
+coreDns:
+  enabled: true
