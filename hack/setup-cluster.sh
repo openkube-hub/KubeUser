@@ -64,38 +64,11 @@ helm upgrade --install cert-manager jetstack/cert-manager \
 
 success "cert-manager ${CERT_MANAGER_VERSION} installed."
 
-fi # --upgrade-only skip end
-
-# ── 5. Build KubeUser image ───────────────────────────────────────────────────
-info "Building KubeUser controller image (${IMG})…"
-make -C "${REPO_ROOT}" docker-build IMG="${IMG}"
-success "Image built."
-
-# ── 6. Load image into kind ───────────────────────────────────────────────────
-info "Loading image into kind cluster '${CLUSTER_NAME}'…"
-kind load docker-image "${IMG}" --name "${CLUSTER_NAME}"
-success "Image loaded."
-
-# ── 7. Install KubeUser Helm chart ────────────────────────────────────────────
-API_SERVER=$(kind get kubeconfig --name "${CLUSTER_NAME}" | grep 'server:' | awk '{print $2}')
-info "API server: ${API_SERVER}"
-
-info "Installing KubeUser Helm chart…"
-helm upgrade --install kubeuser "${REPO_ROOT}/helm/kubeuser" \
-  --namespace kubeuser \
-  --create-namespace \
-  --set image.pullPolicy=IfNotPresent \
-  --set env.KUBERNETES_API_SERVER="${API_SERVER}" \
-  --set metrics.enabled=true \
-  --set metrics.certManager.enabled=true \
-  --set metrics.serviceMonitor.enabled=true \
-  --wait \
-  --timeout 5m
-success "KubeUser installed."
-
-if [[ "${UPGRADE_ONLY}" == "false" ]]; then
-
-# ── 8. kube-prometheus-stack ──────────────────────────────────────────────────
+# ── 5. kube-prometheus-stack ──────────────────────────────────────────────────
+# Installed BEFORE the KubeUser chart so the monitoring.coreos.com/v1
+# ServiceMonitor CRD exists when KubeUser's chart renders. Reordering this
+# above the KubeUser install reintroduces the "no matches for kind
+# ServiceMonitor" failure on a fresh cluster.
 info "Creating monitoring namespace and importing dashboard ConfigMap…"
 kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply -f "${SCRIPT_DIR}/monitoring/kubeuser-dashboard-configmap.yaml"
@@ -114,6 +87,33 @@ helm upgrade --install kube-prometheus-stack \
 success "kube-prometheus-stack ${PROM_CHART_VERSION} installed."
 
 fi # --upgrade-only skip end
+
+# ── 6. Build KubeUser image ───────────────────────────────────────────────────
+info "Building KubeUser controller image (${IMG})…"
+make -C "${REPO_ROOT}" docker-build IMG="${IMG}"
+success "Image built."
+
+# ── 7. Load image into kind ───────────────────────────────────────────────────
+info "Loading image into kind cluster '${CLUSTER_NAME}'…"
+kind load docker-image "${IMG}" --name "${CLUSTER_NAME}"
+success "Image loaded."
+
+# ── 8. Install KubeUser Helm chart ────────────────────────────────────────────
+API_SERVER=$(kind get kubeconfig --name "${CLUSTER_NAME}" | grep 'server:' | awk '{print $2}')
+info "API server: ${API_SERVER}"
+
+info "Installing KubeUser Helm chart…"
+helm upgrade --install kubeuser "${REPO_ROOT}/helm/kubeuser" \
+  --namespace kubeuser \
+  --create-namespace \
+  --set image.pullPolicy=IfNotPresent \
+  --set env.KUBERNETES_API_SERVER="${API_SERVER}" \
+  --set metrics.enabled=true \
+  --set metrics.certManager.enabled=true \
+  --set metrics.serviceMonitor.enabled=true \
+  --wait \
+  --timeout 5m
+success "KubeUser installed."
 
 # ── 9. Apply test user ────────────────────────────────────────────────────────
 info "Applying test user from test-examples/valid-user.yaml…"
