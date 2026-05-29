@@ -21,13 +21,6 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-const (
-	UserFinalizer = "auth.openkube.io/finalizer"
-
-	// userLabel selects all operator-managed resources for a given User.
-	userLabel = "auth.openkube.io/user"
-)
-
 // CleanupUserResources deletes resources owned by the user. Best-effort:
 // per-resource failures are logged but never block finalizer removal.
 func CleanupUserResources(ctx context.Context, r client.Client, user *authv1alpha1.User) {
@@ -39,7 +32,7 @@ func CleanupUserResources(ctx context.Context, r client.Client, user *authv1alph
 	logger := logf.FromContext(ctx).WithName("cleanup")
 	username := user.Name
 	userNamespace := helpers.GetKubeUserNamespace()
-	selector := client.MatchingLabels{userLabel: username}
+	selector := client.MatchingLabels{authv1alpha1.UserLabel: username}
 
 	// Delete steady-state secrets by name. They aren't labelled at creation,
 	// so the label-selector passes below won't catch them.

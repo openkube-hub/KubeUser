@@ -265,7 +265,7 @@ func getOrCreateCSR(ctx context.Context, r client.Client, csrName, username stri
 	newCSR := certv1.CertificateSigningRequest{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   csrName,
-			Labels: map[string]string{"auth.openkube.io/user": username},
+			Labels: map[string]string{authv1alpha1.UserLabel: username},
 		},
 		Spec: certv1.CertificateSigningRequestSpec{
 			Request:           csrPEM,
