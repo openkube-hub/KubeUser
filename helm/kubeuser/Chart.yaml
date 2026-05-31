@@ -18,3 +18,6 @@ maintainers:
     url: https://github.com/openkube-hub/KubeUser
 annotations:
   category: Infrastructure
+  artifacthub.io/signKey: |
+    fingerprint: 1C5268D1FA0BEB4C96866096BDDF0BB1E1075A77
+    url: https://muhanedyahya.github.io/KubeUser/release-key.asc

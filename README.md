@@ -349,6 +349,37 @@ kubectl auth can-i create certificatesigningrequests \
 
 ---
 
+## Verifying Releases
+
+Every release is signed: the controller image with **cosign keyless** (Sigstore,
+Fulcio, Rekor) and the Helm chart with a **PGP** key whose public half is
+published on the chart repo.
+
+### Verify the controller image
+
+```bash
+cosign verify \
+  --certificate-identity-regexp "^https://github.com/openkube-hub/KubeUser/\.github/workflows/release\.yml@refs/tags/v.*$" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/openkube-hub/kubeuser-controller:<version>
+```
+
+### Verify the Helm chart
+
+```bash
+curl -fsSL https://openkube-hub.github.io/KubeUser/release-key.asc \
+  | gpg --dearmor > /tmp/kubeuser-pubring.gpg
+helm pull kubeuser/kubeuser \
+  --verify --keyring /tmp/kubeuser-pubring.gpg \
+  --version <version>
+```
+
+See [docs/release-verification.md](docs/release-verification.md) for the full
+procedure, the values to substitute when verifying against a fork, and the
+release-side runbook for rotating the signing key.
+
+---
+
 ## Documentation
 
 - [Certificate Management](docs/certificate-management.md)
@@ -356,6 +387,7 @@ kubectl auth can-i create certificatesigningrequests \
 - [Webhook Validation](docs/webhook-validation.md)
 - [Metrics Reference](docs/metrics.md)
 - [Accessing Metrics](docs/accessing-metrics.md)
+- [Release Verification](docs/release-verification.md)
 
 ---
 

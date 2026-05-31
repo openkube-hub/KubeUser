@@ -23,14 +23,15 @@ env:
 
 jobs:
   # --------------------------------------------------
-  # Job 1: Build and push controller image to GHCR
+  # Job 1: Build, push, and cosign-sign the controller image
   # --------------------------------------------------
   release-controller:
     runs-on: ubuntu-latest
 
     permissions:
       contents: read
-      packages: write   # push to GHCR with built-in GITHUB_TOKEN
+      packages: write    # push to GHCR with built-in GITHUB_TOKEN
+      id-token: write    # request OIDC token for cosign keyless signing
 
     steps:
       - name: Checkout code
@@ -55,6 +56,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push controller image
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -64,8 +66,20 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v2.4.1
+
+      # Sign by digest — never by tag — so the signature is bound to the exact
+      # content that was just pushed and cannot be invalidated by a later retag.
+      - name: Sign controller image (keyless OIDC)
+        env:
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "$IMAGE_REF"
+
   # --------------------------------------------------
-  # Job 2: Package and release Helm chart
+  # Job 2: Package, PGP-sign, and release the Helm chart
   # Uses chart-releaser-action — stores each chart version
   # as a GitHub Release asset, preserving full history.
   # --------------------------------------------------
@@ -117,6 +131,38 @@ jobs:
       - name: Lint chart
         run: helm lint helm/kubeuser
 
+      # Import the signing key into the runner's gpg agent and derive a legacy
+      # secring file (Helm's --keyring expects the pre-2.1 secring format).
+      - name: Import GPG signing key
+        id: gpg
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.HELM_GPG_KEY }}
+          passphrase: ${{ secrets.HELM_GPG_PASSPHRASE }}
+
+      - name: Prepare keyring and passphrase for chart-releaser
+        env:
+          HELM_GPG_PASSPHRASE: ${{ secrets.HELM_GPG_PASSPHRASE }}
+          KEY_ID: ${{ steps.gpg.outputs.keyid }}
+        run: |
+          KEYRING="$RUNNER_TEMP/secring.gpg"
+          PASSPHRASE_FILE="$RUNNER_TEMP/gpg-passphrase"
+
+          gpg --batch --yes --pinentry-mode loopback \
+              --passphrase "$HELM_GPG_PASSPHRASE" \
+              --export-secret-keys "$KEY_ID" > "$KEYRING"
+          chmod 600 "$KEYRING"
+
+          printf '%s' "$HELM_GPG_PASSPHRASE" > "$PASSPHRASE_FILE"
+          chmod 600 "$PASSPHRASE_FILE"
+
+          {
+            echo "CR_SIGN=true"
+            echo "CR_KEY=$KEY_ID"
+            echo "CR_KEYRING=$KEYRING"
+            echo "CR_PASSPHRASE_FILE=$PASSPHRASE_FILE"
+          } >> "$GITHUB_ENV"
+
       - name: Run chart-releaser
         uses: helm/chart-releaser-action@v1.6.0
         with:
@@ -125,3 +171,30 @@ jobs:
           skip_existing: true   # safe to re-run — skips already released versions
         env:
           CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+          # CR_SIGN / CR_KEY / CR_KEYRING / CR_PASSPHRASE_FILE come from the
+          # previous step; cr (via viper) reads them with the CR_ prefix.
+
+      # Publish the ASCII-armored public key alongside the index so users have
+      # a stable URL for `gpg --import` before running `helm pull --verify`.
+      - name: Publish public key to gh-pages
+        env:
+          KEY_ID: ${{ steps.gpg.outputs.keyid }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          WORKDIR="$RUNNER_TEMP/gh-pages-key"
+          git clone --depth 1 --branch gh-pages \
+            "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" \
+            "$WORKDIR"
+
+          gpg --armor --export "$KEY_ID" > "$WORKDIR/release-key.asc"
+
+          cd "$WORKDIR"
+          if git diff --quiet -- release-key.asc; then
+            echo "Public key unchanged; nothing to publish."
+            exit 0
+          fi
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git add release-key.asc
+          git commit -m "chore(gh-pages): publish release signing key ($KEY_ID)"
+          git push origin gh-pages
