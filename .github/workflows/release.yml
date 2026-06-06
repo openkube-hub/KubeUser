@@ -192,7 +192,11 @@ jobs:
           gpg --armor --export "$KEY_ID" > "$WORKDIR/release-key.asc"
 
           cd "$WORKDIR"
-          if git diff --quiet -- release-key.asc; then
+          # Use porcelain (not `git diff`) so the first-run untracked case
+          # is also detected — `git diff` only inspects tracked files and
+          # would otherwise report "no change" when the key has never been
+          # published.
+          if [[ -z "$(git status --porcelain -- release-key.asc)" ]]; then
             echo "Public key unchanged; nothing to publish."
             exit 0
           fi
