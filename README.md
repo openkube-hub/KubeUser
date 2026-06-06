@@ -52,13 +52,14 @@ KubeUser solves this by managing Kubernetes users through declarative custom res
 
 #### 🚧 Planned
 
-- [ ] **x509 Group Membership** — `O=` field support for RBAC group bindings
+- [ ] **x509 Group Membership** — `O=` field support for RBAC group bindings (not certain)
 - [ ] **Certificate Revocation Notification** — admission warning and event on User deletion
 - [ ] **Audit Log** — immutable record of every certificate issuance and rotation event
 - [ ] **Short-Lived Certificates (< 24h)** — sub-24h TTL for ephemeral, zero-trust access
 - [ ] **ECDSA Key Support** — configurable key algorithm via `spec.auth.keyAlgorithm`
 - [ ] **OpenTelemetry Tracing** — end-to-end traces across reconcile and rotation paths
 - [ ] **Predefined Role Templates** — curated library for common access patterns
+- [ ] **Web UI** — browser-based dashboard for managing users
 
 ---
 
@@ -309,77 +310,6 @@ For Prometheus metrics, Grafana dashboards, and alerting rules see [docs/metrics
 
 ---
 
-## Troubleshooting
-
-### Controller Pod Not Starting
-
-```bash
-kubectl get pods -n kubeuser
-kubectl logs -n kubeuser deployment/kubeuser-controller-manager
-kubectl get events -n kubeuser --sort-by=.lastTimestamp
-```
-
-**Common causes:** missing cert-manager, webhook certificate not ready, image pull issues.
-
-### Webhook Certificate Issues
-
-```bash
-kubectl get certificates -n kubeuser
-kubectl describe certificate kubeuser-webhook-cert -n kubeuser
-kubectl logs -n cert-manager deployment/cert-manager
-```
-
-### User Creation Fails
-
-```bash
-kubectl describe user <username>
-kubectl logs -n kubeuser deployment/kubeuser-controller-manager | grep -i error
-```
-
-**Common causes:** referenced Role/ClusterRole does not exist, target namespace does not exist, webhook validation failure.
-
-### Certificate Generation Issues
-
-```bash
-kubectl get csr -l auth.openkube.io/user=<username>
-kubectl describe csr <csr-name>
-kubectl auth can-i create certificatesigningrequests \
-  --as=system:serviceaccount:kubeuser:kubeuser-controller-manager
-```
-
----
-
-## Verifying Releases
-
-Every release is signed: the controller image with **cosign keyless** (Sigstore,
-Fulcio, Rekor) and the Helm chart with a **PGP** key whose public half is
-published on the chart repo.
-
-### Verify the controller image
-
-```bash
-cosign verify \
-  --certificate-identity-regexp "^https://github.com/openkube-hub/KubeUser/\.github/workflows/release\.yml@refs/tags/v.*$" \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  ghcr.io/openkube-hub/kubeuser-controller:<version>
-```
-
-### Verify the Helm chart
-
-```bash
-curl -fsSL https://openkube-hub.github.io/KubeUser/release-key.asc \
-  | gpg --dearmor > /tmp/kubeuser-pubring.gpg
-helm pull kubeuser/kubeuser \
-  --verify --keyring /tmp/kubeuser-pubring.gpg \
-  --version <version>
-```
-
-See [docs/release-verification.md](docs/release-verification.md) for the full
-procedure, the values to substitute when verifying against a fork, and the
-release-side runbook for rotating the signing key.
-
----
-
 ## Documentation
 
 - [Certificate Management](docs/certificate-management.md)
@@ -388,6 +318,7 @@ release-side runbook for rotating the signing key.
 - [Metrics Reference](docs/metrics.md)
 - [Accessing Metrics](docs/accessing-metrics.md)
 - [Release Verification](docs/release-verification.md)
+- [Troubleshooting](docs/troubleshooting.md)
 
 ---
 
