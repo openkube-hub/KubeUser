@@ -144,6 +144,9 @@ jobs:
         env:
           HELM_GPG_PASSPHRASE: ${{ secrets.HELM_GPG_PASSPHRASE }}
           KEY_ID: ${{ steps.gpg.outputs.keyid }}
+          # Helm's --key flag matches a substring of the GPG UID, not the key
+          # id, so chart-releaser's CR_KEY must be the identity name/email.
+          KEY_NAME: ${{ steps.gpg.outputs.name }}
         run: |
           KEYRING="$RUNNER_TEMP/secring.gpg"
           PASSPHRASE_FILE="$RUNNER_TEMP/gpg-passphrase"
@@ -158,7 +161,7 @@ jobs:
 
           {
             echo "CR_SIGN=true"
-            echo "CR_KEY=$KEY_ID"
+            echo "CR_KEY=$KEY_NAME"
             echo "CR_KEYRING=$KEYRING"
             echo "CR_PASSPHRASE_FILE=$PASSPHRASE_FILE"
           } >> "$GITHUB_ENV"
