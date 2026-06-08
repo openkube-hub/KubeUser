@@ -28,6 +28,8 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -40,7 +42,7 @@ func EnsureCertKubeconfig(ctx context.Context, r client.Client, user *authv1alph
 	// Use default duration (3 months) and default signer
 	defaultDuration := 90 * 24 * time.Hour
 	defaultSigner := certv1.KubeAPIServerClientSignerName
-	return EnsureCertKubeconfigWithDuration(ctx, r, user, defaultDuration, defaultSigner)
+	return EnsureCertKubeconfigWithDuration(ctx, r, user, defaultDuration, defaultSigner, helpers.DefaultKubeconfigClusterName)
 }
 
 // EnsureCertKubeconfigWithDuration ensures certificate kubeconfig with custom duration and configurable signer.
@@ -50,10 +52,13 @@ func EnsureCertKubeconfig(ctx context.Context, r client.Client, user *authv1alph
 // - error: any execution error
 // This function does NOT perform any r.Status().Update() calls - it only modifies the user object in memory.
 // The caller (orchestrator) is responsible for persisting status changes to etcd.
-func EnsureCertKubeconfigWithDuration(ctx context.Context, r client.Client, user *authv1alpha1.User, duration time.Duration, signerName string) (bool, bool, error) {
+func EnsureCertKubeconfigWithDuration(ctx context.Context, r client.Client, user *authv1alpha1.User, duration time.Duration, signerName, clusterName string) (bool, bool, error) {
 	// Default to standard Kubernetes signer if not specified
 	if signerName == "" {
 		signerName = certv1.KubeAPIServerClientSignerName
+	}
+	if clusterName == "" {
+		clusterName = helpers.DefaultKubeconfigClusterName
 	}
 
 	username := user.Name
@@ -99,7 +104,7 @@ func EnsureCertKubeconfigWithDuration(ctx context.Context, r client.Client, user
 	}
 
 	// Stage 7: Persist kubeconfig secret
-	if err := persistKubeconfig(ctx, r, user, signedCert, keyPEM); err != nil {
+	if err := persistKubeconfig(ctx, r, user, signedCert, keyPEM, clusterName); err != nil {
 		return false, false, fmt.Errorf("failed to persist kubeconfig: %w", err)
 	}
 
@@ -396,7 +401,7 @@ func calculateCertificateMetadata(ctx context.Context, user *authv1alpha1.User, 
 }
 
 // persistKubeconfig gathers CA data, API URL, and builds/saves the final kubeconfig secret
-func persistKubeconfig(ctx context.Context, r client.Client, user *authv1alpha1.User, certPEM, keyPEM []byte) error {
+func persistKubeconfig(ctx context.Context, r client.Client, user *authv1alpha1.User, certPEM, keyPEM []byte, clusterName string) error {
 	logger := logf.FromContext(ctx)
 	username := user.Name
 	userNamespace := helpers.GetKubeUserNamespace()
@@ -421,6 +426,7 @@ func persistKubeconfig(ctx context.Context, r client.Client, user *authv1alpha1.
 		base64.StdEncoding.EncodeToString(certPEM),
 		base64.StdEncoding.EncodeToString(keyPEM),
 		username,
+		clusterName,
 	)
 
 	// Create or update kubeconfig secret
@@ -471,27 +477,47 @@ func getClusterCABase64(ctx context.Context, r client.Client) (string, error) {
 	return "", errors.New("CA not found")
 }
 
-func buildCertKubeconfig(apiServer, caDataB64, certDataB64, keyDataB64, username string) []byte {
-	return []byte(fmt.Sprintf(`apiVersion: v1
-kind: Config
-clusters:
-- cluster:
-    certificate-authority-data: %s
-    server: %s
-  name: cluster
-contexts:
-- context:
-    cluster: cluster
-    namespace: default
-    user: %s
-  name: %s@cluster
-current-context: %s@cluster
-users:
-- name: %s
-  user:
-    client-certificate-data: %s
-    client-key-data: %s
-`, caDataB64, apiServer, username, username, username, username, certDataB64, keyDataB64))
+func buildCertKubeconfig(apiServer, caDataB64, certDataB64, keyDataB64, username, clusterName string) []byte {
+	if clusterName == "" {
+		clusterName = helpers.DefaultKubeconfigClusterName
+	}
+	contextName := fmt.Sprintf("%s@%s", username, clusterName)
+	kubeconfig, err := clientcmd.Write(clientcmdapi.Config{
+		Kind:       "Config",
+		APIVersion: "v1",
+		Clusters: map[string]*clientcmdapi.Cluster{
+			clusterName: {
+				Server:                   apiServer,
+				CertificateAuthorityData: decodeBase64OrRaw(caDataB64),
+			},
+		},
+		AuthInfos: map[string]*clientcmdapi.AuthInfo{
+			username: {
+				ClientCertificateData: decodeBase64OrRaw(certDataB64),
+				ClientKeyData:         decodeBase64OrRaw(keyDataB64),
+			},
+		},
+		Contexts: map[string]*clientcmdapi.Context{
+			contextName: {
+				Cluster:   clusterName,
+				AuthInfo:  username,
+				Namespace: "default",
+			},
+		},
+		CurrentContext: contextName,
+	})
+	if err != nil {
+		return []byte{}
+	}
+	return kubeconfig
+}
+
+func decodeBase64OrRaw(value string) []byte {
+	decoded, err := base64.StdEncoding.DecodeString(value)
+	if err != nil {
+		return []byte(value)
+	}
+	return decoded
 }
 
 // extractCertificateExpiryWithFormatDetection tries multiple formats to extract certificate expiry
@@ -679,10 +705,16 @@ func GetAPIServerURL() string {
 
 // BuildCertKubeconfig builds a kubeconfig with certificate authentication (exported for renewal package)
 func BuildCertKubeconfig(apiServer, caDataB64 string, signedCert, keyPEM []byte, username string) []byte {
+	return BuildCertKubeconfigWithClusterName(apiServer, caDataB64, signedCert, keyPEM, username, helpers.DefaultKubeconfigClusterName)
+}
+
+// BuildCertKubeconfigWithClusterName builds a kubeconfig with a configurable cluster name.
+func BuildCertKubeconfigWithClusterName(apiServer, caDataB64 string, signedCert, keyPEM []byte, username, clusterName string) []byte {
 	return buildCertKubeconfig(apiServer, caDataB64,
 		base64.StdEncoding.EncodeToString(signedCert),
 		base64.StdEncoding.EncodeToString(keyPEM),
-		username)
+		username,
+		clusterName)
 }
 
 // ExtractCertificateExpiryWithFormatDetection extracts certificate expiry (exported for renewal package)

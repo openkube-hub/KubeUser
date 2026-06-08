@@ -163,6 +163,8 @@ func TestBuildCertKubeconfig(t *testing.T) {
 					"users:",
 					"contexts:",
 					"current-context:",
+					"  name: cluster",
+					"    cluster: cluster",
 				}
 
 				for _, expected := range expectedStrings {
@@ -172,6 +174,29 @@ func TestBuildCertKubeconfig(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBuildCertKubeconfigWithClusterName(t *testing.T) {
+	got := string(BuildCertKubeconfigWithClusterName(
+		"https://kubernetes.default.svc",
+		"LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t",
+		[]byte("LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t"),
+		[]byte("LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0t"),
+		"alice",
+		"production",
+	))
+
+	expectedStrings := []string{
+		"  name: production",
+		"    cluster: production",
+		"  name: alice@production",
+		"current-context: alice@production",
+	}
+	for _, expected := range expectedStrings {
+		if !contains(got, expected) {
+			t.Errorf("BuildCertKubeconfigWithClusterName() missing expected string: %s", expected)
+		}
 	}
 }
 

@@ -38,6 +38,7 @@ import (
 
 	authv1alpha1 "github.com/openkube-hub/KubeUser/api/v1alpha1"
 	"github.com/openkube-hub/KubeUser/internal/controller"
+	"github.com/openkube-hub/KubeUser/internal/controller/helpers"
 	"github.com/openkube-hub/KubeUser/internal/controller/metrics"
 	"github.com/openkube-hub/KubeUser/internal/validation"
 	webhookpkg "github.com/openkube-hub/KubeUser/internal/webhook"
@@ -120,6 +121,13 @@ func main() {
 		signerName = "kubernetes.io/kube-apiserver-client" // Default for standard K8s
 	}
 	setupLog.Info("Using CSR signer for certificate requests", "signerName", signerName)
+
+	clusterName := helpers.GetKubeconfigClusterName()
+	if err := helpers.ValidateKubeconfigClusterName(clusterName); err != nil {
+		setupLog.Error(err, "invalid kubeconfig cluster name")
+		os.Exit(1)
+	}
+	setupLog.Info("Using kubeconfig cluster name", "clusterName", clusterName)
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -216,10 +224,11 @@ func main() {
 	metricsRecorder := metrics.NewRecorder()
 
 	if err := (&controller.UserReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		SignerName: signerName, // Pass configurable signer for managed K8s support
-		Metrics:    metricsRecorder,
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
+		SignerName:  signerName, // Pass configurable signer for managed K8s support
+		ClusterName: clusterName,
+		Metrics:     metricsRecorder,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "User")
 		os.Exit(1)

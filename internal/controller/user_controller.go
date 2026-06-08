@@ -39,6 +39,7 @@ type UserReconciler struct {
 	AuthManager       *auth.Manager
 	RenewalCalculator *renewal.RenewalCalculator
 	SignerName        string // Configurable CSR signer for managed K8s support (EKS, GKE, AKS)
+	ClusterName       string // Configurable kubeconfig cluster name
 	Metrics           *metrics.Recorder
 }
 
@@ -364,7 +365,7 @@ func (r *UserReconciler) reconcileAuthentication(ctx context.Context, user *auth
 
 	// Initialize auth manager if needed
 	if r.AuthManager == nil {
-		r.AuthManager = auth.NewManager(r.Client, r.EventRecorder, r.SignerName, r.Metrics)
+		r.AuthManager = auth.NewManager(r.Client, r.EventRecorder, r.SignerName, r.ClusterName, r.Metrics)
 	}
 
 	// Capture old values before authentication processing
@@ -696,10 +697,13 @@ func (r *UserReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if r.SignerName == "" {
 		r.SignerName = "kubernetes.io/kube-apiserver-client"
 	}
+	if r.ClusterName == "" {
+		r.ClusterName = helpers.DefaultKubeconfigClusterName
+	}
 
 	// Initialize auth manager with configurable signer
 	if r.AuthManager == nil {
-		r.AuthManager = auth.NewManager(r.Client, r.EventRecorder, r.SignerName, r.Metrics)
+		r.AuthManager = auth.NewManager(r.Client, r.EventRecorder, r.SignerName, r.ClusterName, r.Metrics)
 	}
 
 	// Initialize renewal calculator

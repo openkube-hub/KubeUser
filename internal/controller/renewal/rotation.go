@@ -54,19 +54,24 @@ type RotationManager struct {
 	client        client.Client
 	eventRecorder record.EventRecorder
 	signerName    string // Configurable signer for managed K8s support (EKS, GKE, AKS)
+	clusterName   string // Configurable kubeconfig cluster name
 	metrics       *metrics.Recorder
 }
 
 // NewRotationManager creates a new rotation manager with configurable signer
-func NewRotationManager(k8sClient client.Client, eventRecorder record.EventRecorder, signerName string, metricsRecorder *metrics.Recorder) *RotationManager {
+func NewRotationManager(k8sClient client.Client, eventRecorder record.EventRecorder, signerName, clusterName string, metricsRecorder *metrics.Recorder) *RotationManager {
 	// Default to standard Kubernetes signer if not specified
 	if signerName == "" {
 		signerName = certv1.KubeAPIServerClientSignerName
+	}
+	if clusterName == "" {
+		clusterName = helpers.DefaultKubeconfigClusterName
 	}
 	return &RotationManager{
 		client:        k8sClient,
 		eventRecorder: eventRecorder,
 		signerName:    signerName,
+		clusterName:   clusterName,
 		metrics:       metricsRecorder,
 	}
 }
@@ -867,7 +872,7 @@ func (rm *RotationManager) getAPIServerURL() string {
 
 func (rm *RotationManager) buildKubeconfig(apiServer, caDataB64 string, signedCert, keyPEM []byte, username string) []byte {
 	// Use the existing implementation from certs package
-	return certs.BuildCertKubeconfig(apiServer, caDataB64, signedCert, keyPEM, username)
+	return certs.BuildCertKubeconfigWithClusterName(apiServer, caDataB64, signedCert, keyPEM, username, rm.clusterName)
 }
 
 func (rm *RotationManager) extractCertificateExpiry(certData []byte) (time.Time, error) {

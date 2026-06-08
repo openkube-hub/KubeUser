@@ -190,7 +190,7 @@ func TestManager(t *testing.T) {
 	_ = authv1alpha1.AddToScheme(scheme)
 
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
-	manager := NewManager(client, nil, "", nil) // nil event recorder and metrics for tests, default signer
+	manager := NewManager(client, nil, "", "", nil) // nil event recorder and metrics for tests, default signer
 
 	user := &authv1alpha1.User{
 		ObjectMeta: metav1.ObjectMeta{

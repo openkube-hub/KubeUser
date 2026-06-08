@@ -10,7 +10,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
+	"unicode"
 
 	authv1alpha1 "github.com/openkube-hub/KubeUser/api/v1alpha1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -31,6 +33,8 @@ const (
 	PhaseRenewing = "Renewing"
 )
 
+const DefaultKubeconfigClusterName = "cluster"
+
 // GetAutoRenew returns the autoRenew value with default of true if not specified
 func GetAutoRenew(user *authv1alpha1.User) bool {
 	if user.Spec.Auth == nil {
@@ -49,6 +53,31 @@ func GetKubeUserNamespace() string {
 		namespace = "kubeuser" // fallback to default
 	}
 	return namespace
+}
+
+// GetKubeconfigClusterName returns the cluster name used in generated kubeconfigs.
+func GetKubeconfigClusterName() string {
+	clusterName := os.Getenv("KUBEUSER_CLUSTER_NAME")
+	if clusterName == "" {
+		return DefaultKubeconfigClusterName
+	}
+	return clusterName
+}
+
+// ValidateKubeconfigClusterName rejects blank names and control characters.
+func ValidateKubeconfigClusterName(clusterName string) error {
+	if clusterName == "" {
+		return fmt.Errorf("cluster name must not be empty")
+	}
+	if strings.TrimSpace(clusterName) != clusterName {
+		return fmt.Errorf("cluster name must not have leading or trailing whitespace")
+	}
+	for _, r := range clusterName {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("cluster name %q contains unsupported character %q", clusterName, r)
+		}
+	}
+	return nil
 }
 
 func CreateOrUpdate(ctx context.Context, r client.Client, obj client.Object) error {
