@@ -42,7 +42,17 @@ func ReconcileRoleBindings(ctx context.Context, r client.Client, user *authv1alp
 			return fmt.Errorf("cannot specify both existingRole and existingClusterRole for namespace %s", role.Namespace)
 		}
 
-		var key string
+		// Identity of this role entry. Shared with the admission webhook via
+		// RoleSpec.BindingKey so both agree on what "duplicate" means.
+		key := role.BindingKey()
+
+		// Backstop for the webhook's duplicate check: catches Users that
+		// bypassed admission (pre-existing objects, etcd restore). Fail loud
+		// rather than silently overwriting (issue #57).
+		if _, dup := desiredRBs[key]; dup {
+			return fmt.Errorf("duplicate spec.roles entry %q appears more than once", key)
+		}
+
 		if role.ExistingRole != "" {
 			// Validate that the Role exists
 			var roleObj rbacv1.Role
@@ -52,7 +62,6 @@ func ReconcileRoleBindings(ctx context.Context, r client.Client, user *authv1alp
 				}
 				return fmt.Errorf("failed to get role %s in namespace %s: %w", role.ExistingRole, role.Namespace, err)
 			}
-			key = fmt.Sprintf("%s:%s", role.Namespace, role.ExistingRole)
 		} else {
 			// Validate that the ClusterRole exists
 			var clusterRoleObj rbacv1.ClusterRole
@@ -62,7 +71,6 @@ func ReconcileRoleBindings(ctx context.Context, r client.Client, user *authv1alp
 				}
 				return fmt.Errorf("failed to get clusterrole %s: %w", role.ExistingClusterRole, err)
 			}
-			key = fmt.Sprintf("%s:%s", role.Namespace, role.ExistingClusterRole)
 		}
 		desiredRBs[key] = role
 	}
@@ -157,6 +165,12 @@ func ReconcileClusterRoleBindings(ctx context.Context, r client.Client, user *au
 	// Create a map of desired ClusterRoleBindings (clusterRole -> ClusterRoleSpec)
 	desiredCRBs := make(map[string]authv1alpha1.ClusterRoleSpec)
 	for _, clusterRole := range user.Spec.ClusterRoles {
+		// Backstop for the listType=map uniqueness rule: catches objects that
+		// bypassed admission. Fail loud rather than silently overwriting.
+		if _, dup := desiredCRBs[clusterRole.ExistingClusterRole]; dup {
+			return fmt.Errorf("duplicate spec.clusterRoles entry: clusterRole %q appears more than once", clusterRole.ExistingClusterRole)
+		}
+
 		// Validate that the ClusterRole exists
 		var crObj rbacv1.ClusterRole
 		if err := r.Get(ctx, types.NamespacedName{Name: clusterRole.ExistingClusterRole}, &crObj); err != nil {
