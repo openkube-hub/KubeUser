@@ -12,16 +12,19 @@ import (
 type RoleSpec struct {
 	// Namespace where the RoleBinding will be created
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
 	Namespace string `json:"namespace"`
 
 	// ExistingRole is the name of the Role inside that namespace
 	// Mutually exclusive with ExistingClusterRole
 	// +optional
+	// +kubebuilder:validation:MaxLength=253
 	ExistingRole string `json:"existingRole,omitempty"`
 
 	// ExistingClusterRole is the name of a ClusterRole to bind with a RoleBinding in the namespace
 	// Mutually exclusive with ExistingRole
 	// +optional
+	// +kubebuilder:validation:MaxLength=253
 	ExistingClusterRole string `json:"existingClusterRole,omitempty"`
 }
 
@@ -29,6 +32,7 @@ type RoleSpec struct {
 type ClusterRoleSpec struct {
 	// ExistingClusterRole is the name of the ClusterRole to bind
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
 	ExistingClusterRole string `json:"existingClusterRole"`
 }
 
@@ -63,12 +67,22 @@ type UserSpec struct {
 	// +kubebuilder:validation:Required
 	Auth *AuthSpec `json:"auth"`
 
-	// Roles is a list of namespace-scoped Role bindings
+	// Roles is a list of namespace-scoped Role bindings. Uniqueness per
+	// (namespace, role) is enforced by the webhook and controller via
+	// RoleSpec.BindingKey — a composite key can't be a CRD listMapKey, so it
+	// lives in code. MaxItems is a deliberate object-size/DoS bound.
 	// +optional
+	// +kubebuilder:validation:MaxItems=100
 	Roles []RoleSpec `json:"roles,omitempty"`
 
-	// ClusterRoles is a list of cluster-wide ClusterRole bindings
+	// ClusterRoles is a list of cluster-wide ClusterRole bindings. listType=map
+	// makes the apiserver enforce uniqueness of existingClusterRole natively
+	// (rejected at admission, cannot be bypassed) and enables per-entry
+	// server-side apply. MaxItems is a deliberate object-size/DoS bound.
 	// +optional
+	// +listType=map
+	// +listMapKey=existingClusterRole
+	// +kubebuilder:validation:MaxItems=100
 	ClusterRoles []ClusterRoleSpec `json:"clusterRoles,omitempty"`
 }
 
