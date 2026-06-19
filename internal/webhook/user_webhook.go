@@ -162,6 +162,7 @@ func (w *UserWebhook) ValidateDelete(ctx context.Context, obj runtime.Object) (a
 
 // validateRoles checks that all referenced Roles or ClusterRoles exist in their respective namespaces
 func (w *UserWebhook) validateRoles(ctx context.Context, roles []authv1alpha1.RoleSpec) error {
+	seen := make(map[string]bool)
 	for _, roleSpec := range roles {
 		// Validate that exactly one of ExistingRole or ExistingClusterRole is set
 		if roleSpec.ExistingRole == "" && roleSpec.ExistingClusterRole == "" {
@@ -173,6 +174,11 @@ func (w *UserWebhook) validateRoles(ctx context.Context, roles []authv1alpha1.Ro
 				roleSpec.Namespace)
 		}
 
+		key := roleSpec.BindingKey()
+		if seen[key] {
+			return fmt.Errorf("duplicate role binding %q in spec.roles", key)
+		}
+		seen[key] = true
 		if roleSpec.ExistingRole != "" {
 			// Validate namespace-scoped Role
 			var role rbacv1.Role
@@ -211,6 +217,8 @@ func (w *UserWebhook) validateRoles(ctx context.Context, roles []authv1alpha1.Ro
 
 // validateClusterRoles checks that all referenced ClusterRoles exist
 func (w *UserWebhook) validateClusterRoles(ctx context.Context, clusterRoles []authv1alpha1.ClusterRoleSpec) error {
+	// Duplicate clusterRoles are rejected natively by the apiserver via
+	// listType=map on spec.clusterRoles, so no dedup check is needed here.
 	for _, clusterRoleSpec := range clusterRoles {
 		var clusterRole rbacv1.ClusterRole
 		err := w.Get(ctx, types.NamespacedName{

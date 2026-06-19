@@ -98,7 +98,11 @@ spec:
                 - type
                 type: object
               clusterRoles:
-                description: ClusterRoles is a list of cluster-wide ClusterRole bindings
+                description: |-
+                  ClusterRoles is a list of cluster-wide ClusterRole bindings. listType=map
+                  makes the apiserver enforce uniqueness of existingClusterRole natively
+                  (rejected at admission, cannot be bypassed) and enables per-entry
+                  server-side apply. MaxItems is a deliberate object-size/DoS bound.
                 items:
                   description: ClusterRoleSpec defines cluster-wide access by binding
                     to an existing ClusterRole
@@ -106,14 +110,23 @@ spec:
                     existingClusterRole:
                       description: ExistingClusterRole is the name of the ClusterRole
                         to bind
+                      maxLength: 253
                       minLength: 1
                       type: string
                   required:
                   - existingClusterRole
                   type: object
+                maxItems: 100
                 type: array
+                x-kubernetes-list-map-keys:
+                - existingClusterRole
+                x-kubernetes-list-type: map
               roles:
-                description: Roles is a list of namespace-scoped Role bindings
+                description: |-
+                  Roles is a list of namespace-scoped Role bindings. Uniqueness per
+                  (namespace, role) is enforced by the webhook and controller via
+                  RoleSpec.BindingKey — a composite key can't be a CRD listMapKey, so it
+                  lives in code. MaxItems is a deliberate object-size/DoS bound.
                 items:
                   description: RoleSpec defines namespace-scoped access by binding
                     to an existing Role or ClusterRole
@@ -122,19 +135,23 @@ spec:
                       description: |-
                         ExistingClusterRole is the name of a ClusterRole to bind with a RoleBinding in the namespace
                         Mutually exclusive with ExistingRole
+                      maxLength: 253
                       type: string
                     existingRole:
                       description: |-
                         ExistingRole is the name of the Role inside that namespace
                         Mutually exclusive with ExistingClusterRole
+                      maxLength: 253
                       type: string
                     namespace:
                       description: Namespace where the RoleBinding will be created
+                      maxLength: 253
                       minLength: 1
                       type: string
                   required:
                   - namespace
                   type: object
+                maxItems: 100
                 type: array
             required:
             - auth
@@ -224,7 +241,8 @@ spec:
                   description: RenewalAttempt tracks a single renewal attempt
                   properties:
                     csrName:
-                      description: CSRName is the name of the CSR created for this renewal
+                      description: CSRName is the name of the CSR created for this
+                        renewal
                       type: string
                     message:
                       description: Message provides details about the renewal attempt
