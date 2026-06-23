@@ -22,17 +22,67 @@ KubeUser solves this by managing Kubernetes users through declarative custom res
 ### Architecture
 
 ```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   User CRD      │───▶│  User Controller │───▶│  RBAC Resources │
-│  (Custom Res.)  │    │  (Reconciler)    │    │ (Roles/Bindings)│
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-                                │
-                                ▼
-                       ┌─────────────────┐
-                       │ Certificate &   │
-                       │ Kubeconfig Gen  │
-                       └─────────────────┘
+   ┌──────────────┐
+   │   User CR    │   kubectl apply -f user.yaml
+   └──────┬───────┘
+          │
+          ▼
+   ┌──────────────────────────┐
+   │   Admission Webhooks     │   TLS via cert-manager
+   │   • Mutating  (defaults) │
+   │   • Validating (rules)   │
+   └──────┬───────────────────┘
+          │
+          ▼
+   ┌──────────────────────────┐
+   │     User Controller      │   reconcile loop
+   │       (Reconciler)       │
+   └──┬─────────┬──────────┬──┘
+      │         │          │
+      ▼         ▼          ▼
+   ┌──────┐ ┌─────────┐ ┌────────────┐
+   │ CSR  │ │ Secrets │ │   RBAC     │
+   │ API  │ │  key +  │ │  Role &    │
+   │      │ │ kubecfg │ │  Cluster   │
+   │signed│ │         │ │  Bindings  │
+   └──────┘ └─────────┘ └────────────┘
 ```
+
+---
+
+## Quickstart
+
+Try KubeUser in a few commands on any cluster with a working `kubectl` context:
+
+```bash
+# 1. Install cert-manager (required for webhook TLS)
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.19.2/cert-manager.yaml
+kubectl wait --for=condition=ready pod -l app=cert-manager -n cert-manager --timeout=60s
+
+# 2. Install KubeUser
+helm repo add kubeuser https://openkube-hub.github.io/KubeUser
+helm install kubeuser kubeuser/kubeuser --namespace kubeuser --create-namespace
+
+# 3. Create a User
+cat <<EOF | kubectl apply -f -
+apiVersion: auth.openkube.io/v1alpha1
+kind: User
+metadata:
+  name: alice
+spec:
+  auth:
+    type: x509
+  clusterRoles:
+    - existingClusterRole: view
+EOF
+
+# 4. Retrieve the kubeconfig and use it
+kubectl get secret alice-kubeconfig -n kubeuser \
+  -o jsonpath='{.data.config}' | base64 -d > alice.kubeconfig
+kubectl --kubeconfig alice.kubeconfig get pods -A
+```
+
+For production installs, see [Installation](#installation) below.
 
 ---
 
@@ -45,21 +95,24 @@ KubeUser solves this by managing Kubernetes users through declarative custom res
 - [x] **Stateful Rotation Engine** — resumable, multi-step rotation via the **Shadow Secret** pattern; survives controller restarts
 - [x] **Atomic Secret Updates** — zero-downtime credential flip with rollback on failure
 - [x] **Dynamic RBAC Reconciliation** — automatic RoleBinding and ClusterRoleBinding management
-- [x] **Production-Grade Webhooks** — TLS-secured mutating and validating webhooks with cert-manager CA injection
+- [x] **Mutating & Validating Webhooks** — TLS-secured via cert-manager CA injection
 - [x] **Managed K8s Support** — configurable CSR signers for EKS, GKE, and vanilla clusters
+- [x] **Anti-Thundering-Herd Design** — smart requeue with jitter, 24h TTL floor, 33% renew window, and an idempotent single-status-update reconcile path
+- [x] **High Availability** — leader election and multi-replica deployment shipped via Helm
 - [x] **Prometheus Metrics & Alerting** — rotation counters, duration histograms, expiry gauges, pre-built Grafana dashboard, and shipped PrometheusRule alerts
-- [x] **Kubernetes-native Observability** — structured events via `kubectl describe user` and standard `Ready`, `Renewing`, `AutoRenewal` status conditions
+- [x] **Kubernetes Events** — structured events surfaced via `kubectl describe user`
+- [x] **Status Conditions** — standard `Ready`, `Renewing`, and `AutoRenewal` conditions for declarative status checks
+- [x] **kubectl Printer Columns** — `kubectl get users` shows Phase, AutoRenew, Expiry, NextRenewal, Age, and Message
 
 #### 🚧 Planned
 
-- [ ] **x509 Group Membership** — `O=` field support for RBAC group bindings (not certain)
-- [ ] **Certificate Revocation Notification** — admission warning and event on User deletion
+- [ ] **Deletion Warning Event** — admission warning and Warning event on User delete clarifying that issued certs remain cryptographically valid until expiry (Kubernetes does not consult CRL/OCSP for client certs)
+- [ ] **kubectl Plugin** — `kubectl kubeuser kubeconfig <name>` to replace the manual `kubectl get secret | base64 -d` flow
 - [ ] **Audit Log** — immutable record of every certificate issuance and rotation event
 - [ ] **Short-Lived Certificates (< 24h)** — sub-24h TTL for ephemeral, zero-trust access
 - [ ] **ECDSA Key Support** — configurable key algorithm via `spec.auth.keyAlgorithm`
 - [ ] **OpenTelemetry Tracing** — end-to-end traces across reconcile and rotation paths
-- [ ] **Predefined Role Templates** — curated library for common access patterns
-- [ ] **Web UI** — browser-based dashboard for managing users
+- [ ] **Example Role Manifests** — a curated folder of well-defined, ready-to-apply `Role`/`ClusterRole` YAMLs for common access patterns (read-only, developer, namespace-admin) that users can reference directly
 
 ---
 
@@ -242,31 +295,31 @@ kubectl --kubeconfig /tmp/kubeconfig get pods -n dev
 | `spec.auth.renewBefore` | `string` | No | Renew this duration before expiry. Cannot exceed 90% of TTL |
 | `spec.roles` | `[]RoleSpec` | No | Namespace-scoped role bindings |
 | `spec.roles[].namespace` | `string` | Yes | Target namespace |
-| `spec.roles[].existingRole` | `string` | No* | Existing Role in the namespace |
-| `spec.roles[].existingClusterRole` | `string` | No* | ClusterRole to bind to the namespace |
+| `spec.roles[].existingRole` | `string` | Yes (or `existingClusterRole`) | Existing Role in the same namespace |
+| `spec.roles[].existingClusterRole` | `string` | Yes (or `existingRole`) | ClusterRole bound into the namespace |
 | `spec.clusterRoles` | `[]ClusterRoleSpec` | No | Cluster-wide role bindings |
 | `spec.clusterRoles[].existingClusterRole` | `string` | Yes | Existing ClusterRole |
 
-*Either `existingRole` or `existingClusterRole` must be specified per role entry.*
+> For each `spec.roles[]` entry, exactly one of `existingRole` or `existingClusterRole` must be set.
 
 ---
 
 ## Managed Kubernetes Support
 
-**AWS EKS:**
-```bash
-helm install kubeuser kubeuser/kubeuser \
-  --set signerName="beta.eks.amazonaws.com/app-client" \
-  --set rbac.signerResourceNames[0]="beta.eks.amazonaws.com/app-client"
-```
+KubeUser issues client certificates via the Kubernetes CSR API. The default signer is `kubernetes.io/kube-apiserver-client`, which works on any cluster that permits third-party client-auth CSR signing.
 
-**GKE / AKS:** Discover your signer name, then configure:
-```bash
-kubectl get csr -o jsonpath='{.items[0].spec.signerName}'
+For environments with a custom CA controller (e.g., cert-manager's CA issuer fronting a custom signer), override via Helm:
 
+```bash
 helm install kubeuser kubeuser/kubeuser \
   --set signerName="<your-signer-name>" \
   --set rbac.signerResourceNames[0]="<your-signer-name>"
+```
+
+To see what signers your cluster already accepts:
+
+```bash
+kubectl get csr -o jsonpath='{range .items[*]}{.spec.signerName}{"\n"}{end}' | sort -u
 ```
 
 ---
@@ -278,7 +331,7 @@ helm install kubeuser kubeuser/kubeuser \
 | Limit | Value | Notes |
 |-------|-------|-------|
 | Minimum TTL | 24h | Enforced by validating webhook — prevents thundering herd loops |
-| Maximum TTL | 8760h (1 year) | Based on Kubernetes default `--cluster-signing-duration` |
+| Maximum TTL | Bounded by the cluster signing duration (Kubernetes default: `8760h` / 1 year) | Configure `--cluster-signing-duration` on `kube-controller-manager` to allow longer |
 | Default TTL | 2160h (90 days) | Applied by mutating webhook; configurable via `authDefaults.ttl` |
 
 ### Environment Variables
@@ -290,23 +343,6 @@ helm install kubeuser kubeuser/kubeuser \
 | `KUBEUSER_DEFAULT_TTL` | `2160h` | Default certificate TTL |
 | `KUBEUSER_DEFAULT_AUTORENEW` | `true` | Default auto-renewal behaviour |
 | `KUBEUSER_SIGNER_NAME` | `kubernetes.io/kube-apiserver-client` | CSR signer name |
-
----
-
-## Observability
-
-```bash
-# View all users with expiry and next renewal
-kubectl get users -o custom-columns=NAME:.metadata.name,EXPIRY:.status.expiryTime,NEXT_RENEWAL:.status.nextRenewalAt
-
-# Detailed status and events for a specific user
-kubectl describe user <username>
-
-# Check Ready and Renewing conditions
-kubectl get user <username> -o json | jq '.status.conditions'
-```
-
-For Prometheus metrics, Grafana dashboards, and alerting rules see [docs/metrics.md](docs/metrics.md).
 
 ---
 
