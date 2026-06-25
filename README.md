@@ -59,9 +59,14 @@ Try KubeUser in a few commands on any cluster with a working `kubectl` context:
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.19.2/cert-manager.yaml
 kubectl wait --for=condition=ready pod -l app=cert-manager -n cert-manager --timeout=60s
 
-# 2. Install KubeUser
+# 2. Install KubeUser (uses the API server from your current kubeconfig)
 helm repo add kubeuser https://openkube-hub.github.io/KubeUser
-helm install kubeuser kubeuser/kubeuser --namespace kubeuser --create-namespace
+
+export KUBERNETES_API_SERVER=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+
+helm install kubeuser kubeuser/kubeuser \
+  --namespace kubeuser --create-namespace \
+  --set env.KUBERNETES_API_SERVER="$KUBERNETES_API_SERVER"
 
 # 3. Create a User
 cat <<EOF | kubectl apply -f -
@@ -338,7 +343,7 @@ kubectl get csr -o jsonpath='{range .items[*]}{.spec.signerName}{"\n"}{end}' | s
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `KUBERNETES_API_SERVER` | `https://kubernetes.default.svc` | API server address written into generated kubeconfigs |
+| `KUBERNETES_API_SERVER` | `https://127.0.0.1:6443` | API server address written into generated kubeconfigs |
 | `CLUSTER_DOMAIN` | `cluster.local` | Cluster DNS domain |
 | `KUBEUSER_DEFAULT_TTL` | `2160h` | Default certificate TTL |
 | `KUBEUSER_DEFAULT_AUTORENEW` | `true` | Default auto-renewal behaviour |

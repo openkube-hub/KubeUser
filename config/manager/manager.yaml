@@ -73,7 +73,7 @@ spec:
         - name: KUBEUSER_NAMESPACE
           value: kubeuser
         - name: KUBERNETES_API_SERVER
-          value: https://kubernetes.default.svc
+          value: https://127.0.0.1:6443
         - name: CLUSTER_DOMAIN
           value: cluster.local
         image: ghcr.io/openkube-hub/kubeuser-controller:latest

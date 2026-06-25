@@ -194,7 +194,10 @@ authDefaults:
 
 # Environment variables (additional to the core operator settings below)
 env:
-  KUBERNETES_API_SERVER: "https://kubernetes.default.svc"
+  # Default is the loopback control-plane address on the secure port.
+  # Override with your reachable API server URL, e.g.:
+  #   KUBERNETES_API_SERVER: "https://api.example.com:6443"
+  KUBERNETES_API_SERVER: "https://127.0.0.1:6443"
   CLUSTER_DOMAIN: "cluster.local"
 
 # CSR signer configuration (managed Kubernetes support)

@@ -118,7 +118,7 @@ The following table lists the configurable parameters and their default values:
 | `metrics.service.port` | Metrics service port | `8080` |
 | `rbac.create` | Create RBAC resources | `true` |
 | `crds.install` | Install CustomResourceDefinitions | `true` |
-| `env.KUBERNETES_API_SERVER` | Kubernetes API server endpoint | `https://kubernetes.default.svc` |
+| `env.KUBERNETES_API_SERVER` | API server endpoint written into generated kubeconfigs; override with your reachable URL | `https://127.0.0.1:6443` |
 | `env.CLUSTER_DOMAIN` | Kubernetes cluster domain | `cluster.local` |
 | `env.KUBEUSER_MIN_DURATION` | Minimum certificate duration (optional) | `10m` |
 | `env.KUBEUSER_ROTATION_THRESHOLD` | Certificate rotation threshold (optional) | `25% of TTL` |

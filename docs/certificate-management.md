@@ -191,7 +191,7 @@ spec:
 
 ### Environment Variables
 
-- **KUBERNETES_API_SERVER**: API server URL for kubeconfig generation (default: `https://kubernetes.default.svc`)
+- **KUBERNETES_API_SERVER**: API server URL for kubeconfig generation (default: `https://127.0.0.1:6443`)
 - **KUBEUSER_MIN_DURATION**: Internal testing override for minimum TTL (default: `24h`, not exposed in Helm values.yaml)
 
 ## Troubleshooting
