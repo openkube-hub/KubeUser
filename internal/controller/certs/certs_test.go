@@ -103,74 +103,58 @@ KoZIhvcNAQELBQADQQDDw3xWEKNUMA0GCSqGSIb3DQEBCwUAA0EAw8N8VhCjVDA=
 }
 
 func TestBuildCertKubeconfig(t *testing.T) {
+	// Raw PEM bytes — clientcmd.Write handles the base64 wrapping on YAML
+	// emit, so callers pass raw data straight through.
+	caData := []byte("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----")
+	certData := []byte("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----")
+	keyData := []byte("-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----")
+
 	tests := []struct {
 		name      string
 		apiServer string
-		caDataB64 string
-		certB64   string
-		keyB64    string
 		username  string
-		wantEmpty bool
 	}{
 		{
 			name:      "valid kubeconfig generation",
 			apiServer: "https://kubernetes.default.svc",
-			caDataB64: "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t", // Base64 for "-----BEGIN CERTIFICATE-----"
-			certB64:   "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t",
-			keyB64:    "LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0t", // Base64 for "-----BEGIN PRIVATE KEY-----"
 			username:  "alice",
-			wantEmpty: false,
 		},
 		{
 			name:      "empty username",
 			apiServer: "https://kubernetes.default.svc",
-			caDataB64: "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t",
-			certB64:   "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t",
-			keyB64:    "LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0t",
 			username:  "",
-			wantEmpty: false, // Should still generate kubeconfig
 		},
 		{
 			name:      "empty API server",
 			apiServer: "",
-			caDataB64: "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t",
-			certB64:   "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t",
-			keyB64:    "LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0t",
 			username:  "alice",
-			wantEmpty: false, // Should still generate kubeconfig
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := BuildCertKubeconfig(tt.apiServer, tt.caDataB64, []byte(tt.certB64), []byte(tt.keyB64), tt.username)
-
-			if tt.wantEmpty && len(got) > 0 {
-				t.Errorf("BuildCertKubeconfig() expected empty result, got %d bytes", len(got))
+			got, err := BuildCertKubeconfig(tt.apiServer, caData, certData, keyData, tt.username)
+			if err != nil {
+				t.Fatalf("BuildCertKubeconfig() unexpected error: %v", err)
+			}
+			if len(got) == 0 {
+				t.Fatalf("BuildCertKubeconfig() returned empty bytes")
 			}
 
-			if !tt.wantEmpty && len(got) == 0 {
-				t.Errorf("BuildCertKubeconfig() expected non-empty result, got empty")
+			kubeconfigStr := string(got)
+			expectedStrings := []string{
+				"apiVersion: v1",
+				"kind: Config",
+				"clusters:",
+				"users:",
+				"contexts:",
+				"current-context:",
+				"  name: cluster",
+				"    cluster: cluster",
 			}
-
-			// Basic validation that it contains expected kubeconfig structure
-			if !tt.wantEmpty {
-				kubeconfigStr := string(got)
-				expectedStrings := []string{
-					"apiVersion: v1",
-					"kind: Config",
-					"clusters:",
-					"users:",
-					"contexts:",
-					"current-context:",
-					"  name: cluster",
-					"    cluster: cluster",
-				}
-
-				for _, expected := range expectedStrings {
-					if !contains(kubeconfigStr, expected) {
-						t.Errorf("BuildCertKubeconfig() missing expected string: %s", expected)
-					}
+			for _, expected := range expectedStrings {
+				if !contains(kubeconfigStr, expected) {
+					t.Errorf("BuildCertKubeconfig() missing expected string: %s", expected)
 				}
 			}
 		})
@@ -178,14 +162,22 @@ func TestBuildCertKubeconfig(t *testing.T) {
 }
 
 func TestBuildCertKubeconfigWithClusterName(t *testing.T) {
-	got := string(BuildCertKubeconfigWithClusterName(
+	caData := []byte("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----")
+	certData := []byte("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----")
+	keyData := []byte("-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----")
+
+	rawKubeconfig, err := BuildCertKubeconfigWithClusterName(
 		"https://kubernetes.default.svc",
-		"LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t",
-		[]byte("LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t"),
-		[]byte("LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0t"),
+		caData,
+		certData,
+		keyData,
 		"alice",
 		"production",
-	))
+	)
+	if err != nil {
+		t.Fatalf("BuildCertKubeconfigWithClusterName() unexpected error: %v", err)
+	}
+	got := string(rawKubeconfig)
 
 	expectedStrings := []string{
 		"  name: production",
