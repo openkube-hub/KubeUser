@@ -1,6 +1,9 @@
 package helpers
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestGetKubeconfigClusterNameDefault(t *testing.T) {
 	t.Setenv("KUBEUSER_CLUSTER_NAME", "")
@@ -24,6 +27,7 @@ func TestValidateKubeconfigClusterName(t *testing.T) {
 		clusterName string
 		wantErr     bool
 	}{
+		// Accepted: DNS-1123 labels.
 		{
 			name:        "default",
 			clusterName: DefaultKubeconfigClusterName,
@@ -35,8 +39,54 @@ func TestValidateKubeconfigClusterName(t *testing.T) {
 			wantErr:     false,
 		},
 		{
+			name:        "hyphenated region",
+			clusterName: "prod-eu-west-1",
+			wantErr:     false,
+		},
+		{
+			name:        "single character",
+			clusterName: "a",
+			wantErr:     false,
+		},
+		{
+			name:        "max length 63",
+			clusterName: strings.Repeat("a", 63),
+			wantErr:     false,
+		},
+		// Rejected: violations of the DNS-1123 label rule.
+		{
 			name:        "empty",
 			clusterName: "",
+			wantErr:     true,
+		},
+		{
+			name:        "uppercase",
+			clusterName: "Production",
+			wantErr:     true,
+		},
+		{
+			name:        "all uppercase",
+			clusterName: "PROD",
+			wantErr:     true,
+		},
+		{
+			name:        "underscore",
+			clusterName: "prod_east",
+			wantErr:     true,
+		},
+		{
+			name:        "over 63 characters",
+			clusterName: strings.Repeat("a", 64),
+			wantErr:     true,
+		},
+		{
+			name:        "leading hyphen",
+			clusterName: "-prod",
+			wantErr:     true,
+		},
+		{
+			name:        "trailing hyphen",
+			clusterName: "prod-",
 			wantErr:     true,
 		},
 		{
@@ -47,17 +97,22 @@ func TestValidateKubeconfigClusterName(t *testing.T) {
 		{
 			name:        "embedded whitespace",
 			clusterName: "prod east",
-			wantErr:     false,
+			wantErr:     true,
 		},
 		{
 			name:        "context separator",
 			clusterName: "prod@east",
-			wantErr:     false,
+			wantErr:     true,
 		},
 		{
 			name:        "yaml separator",
 			clusterName: "prod:east",
-			wantErr:     false,
+			wantErr:     true,
+		},
+		{
+			name:        "dot separator",
+			clusterName: "prod.east",
+			wantErr:     true,
 		},
 		{
 			name:        "newline",

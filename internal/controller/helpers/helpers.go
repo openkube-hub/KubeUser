@@ -12,13 +12,13 @@ import (
 	"os"
 	"strings"
 	"time"
-	"unicode"
 
 	authv1alpha1 "github.com/openkube-hub/KubeUser/api/v1alpha1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -64,18 +64,16 @@ func GetKubeconfigClusterName() string {
 	return clusterName
 }
 
-// ValidateKubeconfigClusterName rejects blank names and control characters.
+// ValidateKubeconfigClusterName enforces the DNS-1123 label rule
+// (^[a-z0-9]([-a-z0-9]*[a-z0-9])?$, at most 63 characters) so that generated
+// kubeconfig cluster and context names are safe for downstream tooling
+// (kubectl, kubectx, GitOps flows) that assume DNS-safe identifiers.
 func ValidateKubeconfigClusterName(clusterName string) error {
 	if clusterName == "" {
 		return fmt.Errorf("cluster name must not be empty")
 	}
-	if strings.TrimSpace(clusterName) != clusterName {
-		return fmt.Errorf("cluster name must not have leading or trailing whitespace")
-	}
-	for _, r := range clusterName {
-		if unicode.IsControl(r) {
-			return fmt.Errorf("cluster name %q contains unsupported character %q", clusterName, r)
-		}
+	if errs := validation.IsDNS1123Label(clusterName); len(errs) > 0 {
+		return fmt.Errorf("cluster name %q is not a valid DNS-1123 label: %s", clusterName, strings.Join(errs, "; "))
 	}
 	return nil
 }
