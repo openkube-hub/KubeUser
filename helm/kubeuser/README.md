@@ -63,6 +63,7 @@ authDefaults:
 - `authDefaults.ttl` → `KUBEUSER_DEFAULT_TTL`
 - `authDefaults.autoRenew` → `KUBEUSER_DEFAULT_AUTORENEW`
 - `signerName` → `KUBEUSER_SIGNER_NAME`
+- `clusterName` → `KUBEUSER_CLUSTER_NAME`
 
 **⚠️  Important:** Changes to `authDefaults` only apply to NEW users created after the Helm upgrade. Existing users retain their original defaults (persisted in spec).
 
@@ -122,6 +123,7 @@ The following table lists the configurable parameters and their default values:
 | `env.CLUSTER_DOMAIN` | Kubernetes cluster domain | `cluster.local` |
 | `env.KUBEUSER_MIN_DURATION` | Minimum certificate duration (optional) | `10m` |
 | `env.KUBEUSER_ROTATION_THRESHOLD` | Certificate rotation threshold (optional) | `25% of TTL` |
+| `clusterName` | Cluster and context name written into generated kubeconfigs | `cluster` |
 | `commonLabels.environment` | Common environment label | `test` |
 
 ## Usage Examples

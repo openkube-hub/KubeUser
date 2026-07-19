@@ -182,6 +182,10 @@ env:
 # - GKE/AKS or custom: set to your cluster's signer name
 signerName: "kubernetes.io/kube-apiserver-client"
 
+# Kubeconfig cluster name
+# This controls the cluster and context name written into generated kubeconfigs.
+clusterName: "cluster"
+
 # RBAC configuration
 rbac:
   create: true

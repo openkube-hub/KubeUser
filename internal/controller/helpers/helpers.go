@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	authv1alpha1 "github.com/openkube-hub/KubeUser/api/v1alpha1"
@@ -17,6 +18,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -30,6 +32,8 @@ const (
 	PhasePending  = "Pending"
 	PhaseRenewing = "Renewing"
 )
+
+const DefaultKubeconfigClusterName = "cluster"
 
 // GetAutoRenew returns the autoRenew value with default of true if not specified
 func GetAutoRenew(user *authv1alpha1.User) bool {
@@ -49,6 +53,29 @@ func GetKubeUserNamespace() string {
 		namespace = "kubeuser" // fallback to default
 	}
 	return namespace
+}
+
+// GetKubeconfigClusterName returns the cluster name used in generated kubeconfigs.
+func GetKubeconfigClusterName() string {
+	clusterName := os.Getenv("KUBEUSER_CLUSTER_NAME")
+	if clusterName == "" {
+		return DefaultKubeconfigClusterName
+	}
+	return clusterName
+}
+
+// ValidateKubeconfigClusterName enforces the DNS-1123 label rule
+// (^[a-z0-9]([-a-z0-9]*[a-z0-9])?$, at most 63 characters) so that generated
+// kubeconfig cluster and context names are safe for downstream tooling
+// (kubectl, kubectx, GitOps flows) that assume DNS-safe identifiers.
+func ValidateKubeconfigClusterName(clusterName string) error {
+	if clusterName == "" {
+		return fmt.Errorf("cluster name must not be empty")
+	}
+	if errs := validation.IsDNS1123Label(clusterName); len(errs) > 0 {
+		return fmt.Errorf("cluster name %q is not a valid DNS-1123 label: %s", clusterName, strings.Join(errs, "; "))
+	}
+	return nil
 }
 
 func CreateOrUpdate(ctx context.Context, r client.Client, obj client.Object) error {

@@ -59,6 +59,8 @@ spec:
           value: {{ .Release.Namespace }}
         - name: KUBEUSER_SIGNER_NAME
           value: {{ (.Values.signerName | default "kubernetes.io/kube-apiserver-client") | quote }}
+        - name: KUBEUSER_CLUSTER_NAME
+          value: {{ (.Values.clusterName | default "cluster") | quote }}
         - name: KUBEUSER_DEFAULT_TTL
           value: {{ .Values.authDefaults.ttl | quote }}
         - name: KUBEUSER_DEFAULT_AUTORENEW

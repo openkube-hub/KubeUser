@@ -2,6 +2,7 @@ package renewal
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 )
 
 func TestRotationManager_generateUniqueCSRName(t *testing.T) {
-	rm := NewRotationManager(nil, nil, "", nil)
+	rm := NewRotationManager(nil, nil, "", "", nil)
 
 	tests := []struct {
 		name     string
@@ -49,6 +50,30 @@ func TestRotationManager_generateUniqueCSRName(t *testing.T) {
 				t.Errorf("generateUniqueCSRName() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRotationManagerBuildKubeconfigUsesConfiguredClusterName(t *testing.T) {
+	rm := NewRotationManager(nil, nil, "", "production", nil)
+
+	got := string(rm.buildKubeconfig(
+		"https://kubernetes.default.svc",
+		"LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t",
+		[]byte("LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t"),
+		[]byte("LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0t"),
+		"alice",
+	))
+
+	expectedStrings := []string{
+		"  name: production",
+		"    cluster: production",
+		"  name: alice@production",
+		"current-context: alice@production",
+	}
+	for _, expected := range expectedStrings {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("buildKubeconfig() missing expected string %q in:\n%s", expected, got)
+		}
 	}
 }
 
@@ -132,7 +157,7 @@ func TestRotationManager_IsRotationInProgress(t *testing.T) {
 				WithRuntimeObjects(objects...).
 				Build()
 
-			rm := NewRotationManager(client, nil, "", nil)
+			rm := NewRotationManager(client, nil, "", "", nil)
 
 			gotInProgress, gotCSRName, err := rm.IsRotationInProgress(context.TODO(), tt.username)
 
@@ -153,7 +178,7 @@ func TestRotationManager_IsRotationInProgress(t *testing.T) {
 }
 
 func TestRotationManager_GetRotationRequeueDelay(t *testing.T) {
-	rm := NewRotationManager(nil, nil, "", nil)
+	rm := NewRotationManager(nil, nil, "", "", nil)
 
 	tests := []struct {
 		name         string
@@ -193,7 +218,7 @@ func TestRotationManager_GetRotationRequeueDelay(t *testing.T) {
 }
 
 func TestRotationManager_recordUniqueAttempt_Basic(t *testing.T) {
-	rm := NewRotationManager(nil, nil, "", nil)
+	rm := NewRotationManager(nil, nil, "", "", nil)
 
 	// Test basic functionality - adding first attempt
 	user := &authv1alpha1.User{
@@ -221,7 +246,7 @@ func TestRotationManager_recordUniqueAttempt_Basic(t *testing.T) {
 }
 
 func TestRotationManager_validateCSRForApproval(t *testing.T) {
-	rm := NewRotationManager(nil, nil, "", nil)
+	rm := NewRotationManager(nil, nil, "", "", nil)
 
 	tests := []struct {
 		name    string
@@ -370,7 +395,7 @@ func TestRotationManager_IsRotationInProgress_RoundTripsCSRName(t *testing.T) {
 	}
 
 	cli := fake.NewClientBuilder().WithScheme(scheme).Build()
-	rm := NewRotationManager(cli, nil, "kubernetes.io/kube-apiserver-client", nil)
+	rm := NewRotationManager(cli, nil, "kubernetes.io/kube-apiserver-client", "", nil)
 
 	user := &authv1alpha1.User{
 		ObjectMeta: metav1.ObjectMeta{
