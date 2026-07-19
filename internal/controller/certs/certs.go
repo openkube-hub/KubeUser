@@ -408,7 +408,7 @@ func persistKubeconfig(ctx context.Context, r client.Client, user *authv1alpha1.
 	cfgSecretName := fmt.Sprintf("%s-kubeconfig", username)
 
 	// Get cluster CA certificate
-	caDataB64, err := getClusterCABase64(ctx, r)
+	caData, err := getClusterCA(ctx, r)
 	if err != nil {
 		return fmt.Errorf("failed to get cluster CA: %w", err)
 	}
@@ -420,14 +420,10 @@ func persistKubeconfig(ctx context.Context, r client.Client, user *authv1alpha1.
 	}
 
 	// Build kubeconfig
-	kcfg := buildCertKubeconfig(
-		apiServer,
-		caDataB64,
-		base64.StdEncoding.EncodeToString(certPEM),
-		base64.StdEncoding.EncodeToString(keyPEM),
-		username,
-		clusterName,
-	)
+	kcfg, err := buildCertKubeconfig(apiServer, caData, certPEM, keyPEM, username, clusterName)
+	if err != nil {
+		return fmt.Errorf("failed to build kubeconfig: %w", err)
+	}
 
 	// Create or update kubeconfig secret
 	cfgSecret := &corev1.Secret{
@@ -464,20 +460,26 @@ func csrFromKey(username string, keyPEM []byte) ([]byte, error) {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER}), nil
 }
 
-func getClusterCABase64(ctx context.Context, r client.Client) (string, error) {
+// getClusterCA returns the cluster CA certificate as raw PEM bytes. It first
+// looks at the in-cluster service-account CA and falls back to the
+// kube-root-ca.crt ConfigMap for out-of-cluster runs (e.g. `make run`).
+func getClusterCA(ctx context.Context, r client.Client) ([]byte, error) {
 	if data, err := os.ReadFile(filepath.Clean(inClusterCAPath)); err == nil && len(data) > 0 {
-		return base64.StdEncoding.EncodeToString(data), nil
+		return data, nil
 	}
 	var cm corev1.ConfigMap
 	if err := r.Get(ctx, types.NamespacedName{Namespace: "default", Name: "kube-root-ca.crt"}, &cm); err == nil {
 		if crt, ok := cm.Data["ca.crt"]; ok {
-			return base64.StdEncoding.EncodeToString([]byte(crt)), nil
+			return []byte(crt), nil
 		}
 	}
-	return "", errors.New("CA not found")
+	return nil, errors.New("CA not found")
 }
 
-func buildCertKubeconfig(apiServer, caDataB64, certDataB64, keyDataB64, username, clusterName string) []byte {
+// buildCertKubeconfig serializes a kubeconfig for the given user via
+// clientcmd. All byte inputs are raw PEM; clientcmd handles the base64
+// encoding on YAML emission itself, so no pre-encoding is required.
+func buildCertKubeconfig(apiServer string, caData, certData, keyData []byte, username, clusterName string) ([]byte, error) {
 	if clusterName == "" {
 		clusterName = helpers.DefaultKubeconfigClusterName
 	}
@@ -488,13 +490,13 @@ func buildCertKubeconfig(apiServer, caDataB64, certDataB64, keyDataB64, username
 		Clusters: map[string]*clientcmdapi.Cluster{
 			clusterName: {
 				Server:                   apiServer,
-				CertificateAuthorityData: decodeBase64OrRaw(caDataB64),
+				CertificateAuthorityData: caData,
 			},
 		},
 		AuthInfos: map[string]*clientcmdapi.AuthInfo{
 			username: {
-				ClientCertificateData: decodeBase64OrRaw(certDataB64),
-				ClientKeyData:         decodeBase64OrRaw(keyDataB64),
+				ClientCertificateData: certData,
+				ClientKeyData:         keyData,
 			},
 		},
 		Contexts: map[string]*clientcmdapi.Context{
@@ -507,17 +509,9 @@ func buildCertKubeconfig(apiServer, caDataB64, certDataB64, keyDataB64, username
 		CurrentContext: contextName,
 	})
 	if err != nil {
-		return []byte{}
+		return nil, fmt.Errorf("failed to serialize kubeconfig for user %q: %w", username, err)
 	}
-	return kubeconfig
-}
-
-func decodeBase64OrRaw(value string) []byte {
-	decoded, err := base64.StdEncoding.DecodeString(value)
-	if err != nil {
-		return []byte(value)
-	}
-	return decoded
+	return kubeconfig, nil
 }
 
 // extractCertificateExpiryWithFormatDetection tries multiple formats to extract certificate expiry
@@ -689,9 +683,9 @@ func getRotationThreshold(certDuration time.Duration) time.Duration {
 	return certDuration / 4 // 25% of original duration
 }
 
-// GetClusterCABase64 gets the cluster CA certificate in base64 format (exported for renewal package)
-func GetClusterCABase64(ctx context.Context, r client.Client) (string, error) {
-	return getClusterCABase64(ctx, r)
+// GetClusterCA returns the cluster CA certificate as raw PEM bytes (exported for renewal package).
+func GetClusterCA(ctx context.Context, r client.Client) ([]byte, error) {
+	return getClusterCA(ctx, r)
 }
 
 // GetAPIServerURL gets the API server URL (exported for renewal package)
@@ -703,18 +697,15 @@ func GetAPIServerURL() string {
 	return apiServer
 }
 
-// BuildCertKubeconfig builds a kubeconfig with certificate authentication (exported for renewal package)
-func BuildCertKubeconfig(apiServer, caDataB64 string, signedCert, keyPEM []byte, username string) []byte {
-	return BuildCertKubeconfigWithClusterName(apiServer, caDataB64, signedCert, keyPEM, username, helpers.DefaultKubeconfigClusterName)
+// BuildCertKubeconfig builds a kubeconfig with certificate authentication
+// using the default cluster name (exported for renewal package).
+func BuildCertKubeconfig(apiServer string, caData, signedCert, keyPEM []byte, username string) ([]byte, error) {
+	return BuildCertKubeconfigWithClusterName(apiServer, caData, signedCert, keyPEM, username, helpers.DefaultKubeconfigClusterName)
 }
 
 // BuildCertKubeconfigWithClusterName builds a kubeconfig with a configurable cluster name.
-func BuildCertKubeconfigWithClusterName(apiServer, caDataB64 string, signedCert, keyPEM []byte, username, clusterName string) []byte {
-	return buildCertKubeconfig(apiServer, caDataB64,
-		base64.StdEncoding.EncodeToString(signedCert),
-		base64.StdEncoding.EncodeToString(keyPEM),
-		username,
-		clusterName)
+func BuildCertKubeconfigWithClusterName(apiServer string, caData, signedCert, keyPEM []byte, username, clusterName string) ([]byte, error) {
+	return buildCertKubeconfig(apiServer, caData, signedCert, keyPEM, username, clusterName)
 }
 
 // ExtractCertificateExpiryWithFormatDetection extracts certificate expiry (exported for renewal package)

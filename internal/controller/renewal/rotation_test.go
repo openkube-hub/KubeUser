@@ -56,13 +56,17 @@ func TestRotationManager_generateUniqueCSRName(t *testing.T) {
 func TestRotationManagerBuildKubeconfigUsesConfiguredClusterName(t *testing.T) {
 	rm := NewRotationManager(nil, nil, "", "production", nil)
 
-	got := string(rm.buildKubeconfig(
+	rawKubeconfig, err := rm.buildKubeconfig(
 		"https://kubernetes.default.svc",
-		"LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t",
-		[]byte("LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t"),
-		[]byte("LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0t"),
+		[]byte("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----"),
+		[]byte("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----"),
+		[]byte("-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----"),
 		"alice",
-	))
+	)
+	if err != nil {
+		t.Fatalf("buildKubeconfig() unexpected error: %v", err)
+	}
+	got := string(rawKubeconfig)
 
 	expectedStrings := []string{
 		"  name: production",

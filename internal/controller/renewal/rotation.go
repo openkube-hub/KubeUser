@@ -643,15 +643,19 @@ func (rm *RotationManager) atomicSecretUpdate(ctx context.Context, user *authv1a
 	userNamespace := helpers.GetKubeUserNamespace()
 
 	// Get cluster CA and API server info
-	caDataB64, err := rm.getClusterCABase64(ctx)
+	caData, err := rm.getClusterCA(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get cluster CA: %w", err)
 	}
 
 	apiServer := rm.getAPIServerURL()
 
-	// Build new kubeconfig
-	newKubeconfig := rm.buildKubeconfig(apiServer, caDataB64, signedCert, newKeyPEM, username)
+	// Build new kubeconfig before touching either target secret; if serialization
+	// fails we abort here instead of half-writing the shadow-flip.
+	newKubeconfig, err := rm.buildKubeconfig(apiServer, caData, signedCert, newKeyPEM, username)
+	if err != nil {
+		return fmt.Errorf("failed to build kubeconfig: %w", err)
+	}
 
 	// Backup existing secrets for rollback
 	keySecretName := fmt.Sprintf("%s-key", username)
@@ -860,9 +864,8 @@ func (rm *RotationManager) GetRotationRequeueDelay(certDuration time.Duration) t
 	return 2 * time.Minute
 }
 
-func (rm *RotationManager) getClusterCABase64(ctx context.Context) (string, error) {
-	// Use the existing implementation from certs package
-	return certs.GetClusterCABase64(ctx, rm.client)
+func (rm *RotationManager) getClusterCA(ctx context.Context) ([]byte, error) {
+	return certs.GetClusterCA(ctx, rm.client)
 }
 
 func (rm *RotationManager) getAPIServerURL() string {
@@ -870,9 +873,8 @@ func (rm *RotationManager) getAPIServerURL() string {
 	return certs.GetAPIServerURL()
 }
 
-func (rm *RotationManager) buildKubeconfig(apiServer, caDataB64 string, signedCert, keyPEM []byte, username string) []byte {
-	// Use the existing implementation from certs package
-	return certs.BuildCertKubeconfigWithClusterName(apiServer, caDataB64, signedCert, keyPEM, username, rm.clusterName)
+func (rm *RotationManager) buildKubeconfig(apiServer string, caData, signedCert, keyPEM []byte, username string) ([]byte, error) {
+	return certs.BuildCertKubeconfigWithClusterName(apiServer, caData, signedCert, keyPEM, username, rm.clusterName)
 }
 
 func (rm *RotationManager) extractCertificateExpiry(certData []byte) (time.Time, error) {
