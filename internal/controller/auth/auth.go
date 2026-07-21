@@ -26,6 +26,14 @@ const (
 	DefaultTTL = "2160h" // 90 days
 )
 
+// ReservedIdentityPrefix is the prefix Kubernetes reserves for built-in
+// identities (system:masters, system:kube-controller-manager,
+// system:serviceaccount:*, etc.). A User whose metadata.name carries this
+// prefix would mint an x509 certificate whose Subject CN forges a privileged
+// identity, so every layer that can create a User or issue credentials
+// rejects it.
+const ReservedIdentityPrefix = "system:"
+
 // Provider defines the interface for authentication providers
 type Provider interface {
 	// Ensure creates or updates authentication credentials for the user
@@ -119,19 +127,29 @@ func (m *Manager) getProvider(user *authv1alpha1.User) (Provider, error) {
 	}
 }
 
+// ValidateUserIdentity rejects User names that would forge a Kubernetes
+// built-in identity when embedded as the Subject CN of the generated x509
+// certificate. Called from the admission webhook (fast reject at create/update)
+// and from every reconciler entrypoint that mints credentials, so that a User
+// which somehow lands in etcd without passing the webhook (direct etcd write,
+// pre-existing object, misconfigured admission chain) still cannot be issued a
+// certificate.
+//
+// In practice kube-apiserver's RFC 1123 name validation already rejects the
+// ':' character in metadata.name on the normal API path, but that guarantee
+// is not part of our contract with the API server and defense in depth here
+// is cheap.
+func ValidateUserIdentity(user *authv1alpha1.User) error {
+	if strings.HasPrefix(user.Name, ReservedIdentityPrefix) {
+		return fmt.Errorf("metadata.name %q is invalid: names starting with %q are reserved for Kubernetes built-in identities and would forge a privileged certificate Subject CN",
+			user.Name, ReservedIdentityPrefix)
+	}
+	return nil
+}
+
 // ValidateAuthSpec validates the auth specification for the user
 // MANDATORY IDENTITY: Enforces explicit authentication type specification
 func ValidateAuthSpec(user *authv1alpha1.User) error {
-	// SECURITY: Reject usernames with 'system:' prefix to prevent CN spoofing.
-	// Kubernetes reserves the 'system:' prefix for built-in identities (e.g.,
-	// system:kube-controller-manager, system:serviceaccount:...). Allowing user
-	// resources with this prefix would generate X.509 certificates whose Subject
-	// CN matches a privileged identity, enabling privilege escalation via CN
-	// spoofing.
-	if strings.HasPrefix(user.Name, "system:") {
-		return fmt.Errorf("username %q is invalid: the 'system:' prefix is reserved for Kubernetes built-in identities and cannot be used to prevent certificate CN spoofing", user.Name)
-	}
-
 	// MANDATORY IDENTITY ENFORCEMENT: Auth must be non-nil
 	if user.Spec.Auth == nil {
 		return fmt.Errorf("authentication section is mandatory: spec.auth must be specified")
