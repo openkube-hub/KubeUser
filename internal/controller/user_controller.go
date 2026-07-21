@@ -179,6 +179,16 @@ func (r *UserReconciler) reconcileBusinessLogic(ctx context.Context, user *authv
 	logger := logf.FromContext(ctx)
 	needsStatusUpdate := false
 
+	// Reject reserved identity prefixes before any credential work. Defense in
+	// depth: the webhook rejects at admission, but a User that landed in etcd
+	// without passing the webhook must not be issued a certificate.
+	if err := auth.ValidateUserIdentity(user); err != nil {
+		logger.Error(err, "Invalid user identity")
+		user.Status.Phase = helpers.PhaseError
+		user.Status.Message = fmt.Sprintf("Invalid user identity: %v", err)
+		return true, nil, err
+	}
+
 	// Validate auth specification
 	if err := auth.ValidateAuthSpec(user); err != nil {
 		logger.Error(err, "Invalid auth specification")

@@ -61,6 +61,12 @@ func (p *X509Provider) Ensure(ctx context.Context, user *authv1alpha1.User) (boo
 		return false, nil, fmt.Errorf("authentication section is mandatory")
 	}
 
+	// Last line of defense before minting a certificate: refuse reserved
+	// identity prefixes. user.Name becomes the Subject CN downstream.
+	if err := ValidateUserIdentity(user); err != nil {
+		return false, nil, fmt.Errorf("invalid user identity: %w", err)
+	}
+
 	logger.Info("Ensuring x509 authentication", "user", user.Name, "autoRenew", helpers.GetAutoRenew(user))
 
 	// Validate auth spec

@@ -98,6 +98,11 @@ func (w *UserWebhook) ValidateCreate(ctx context.Context, obj runtime.Object) (a
 	logger := logf.FromContext(ctx).WithName("user-webhook-create")
 	logger.Info("Validating User creation", "user", user.Name)
 
+	// Reject reserved identity prefixes before touching the API server
+	if err := auth.ValidateUserIdentity(user); err != nil {
+		return nil, err
+	}
+
 	// Validate Role references
 	if err := w.validateRoles(ctx, user.Spec.Roles); err != nil {
 		return nil, err
@@ -134,6 +139,13 @@ func (w *UserWebhook) ValidateUpdate(ctx context.Context, oldObj, newObj runtime
 	if newUser.DeletionTimestamp != nil {
 		logger.Info("Skipping validation for User being deleted", "user", newUser.Name)
 		return nil, nil
+	}
+
+	// Reject reserved identity prefixes. metadata.name is immutable, so this
+	// only catches objects that slipped past ValidateCreate (webhook down,
+	// direct etcd write, pre-existing object).
+	if err := auth.ValidateUserIdentity(newUser); err != nil {
+		return nil, err
 	}
 
 	// Validate Role references in the updated spec

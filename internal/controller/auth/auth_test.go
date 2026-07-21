@@ -17,6 +17,72 @@ func stringPtr(s string) *string {
 	return &s
 }
 
+func TestValidateUserIdentity(t *testing.T) {
+	tests := []struct {
+		name     string
+		userName string
+		wantErr  bool
+	}{
+		{
+			name:     "plain username is accepted",
+			userName: "alice",
+			wantErr:  false,
+		},
+		{
+			name:     "dotted/hyphenated RFC 1123 name is accepted",
+			userName: "team-a.svc-01",
+			wantErr:  false,
+		},
+		{
+			name:     "empty name is accepted (other validators cover empty)",
+			userName: "",
+			wantErr:  false,
+		},
+		{
+			name:     "system:masters is rejected (issue #66)",
+			userName: "system:masters",
+			wantErr:  true,
+		},
+		{
+			name:     "system:kube-controller-manager is rejected",
+			userName: "system:kube-controller-manager",
+			wantErr:  true,
+		},
+		{
+			name:     "system:serviceaccount:kube-system:default is rejected",
+			userName: "system:serviceaccount:kube-system:default",
+			wantErr:  true,
+		},
+		{
+			name:     "bare 'system:' prefix is rejected",
+			userName: "system:",
+			wantErr:  true,
+		},
+		{
+			name:     "'system:' substring not at start is accepted",
+			userName: "not-a-system:masters",
+			wantErr:  false,
+		},
+		{
+			name:     "prefix check is case-sensitive (matches Kubernetes)",
+			userName: "System:Masters",
+			wantErr:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			user := &authv1alpha1.User{
+				ObjectMeta: metav1.ObjectMeta{Name: tt.userName},
+			}
+			err := ValidateUserIdentity(user)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateUserIdentity(%q) error = %v, wantErr %v", tt.userName, err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestValidateAuthSpec(t *testing.T) {
 	// Save and restore environment variable
 	originalMinDuration := os.Getenv("KUBEUSER_MIN_DURATION")

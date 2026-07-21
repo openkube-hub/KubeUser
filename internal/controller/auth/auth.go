@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	authv1alpha1 "github.com/openkube-hub/KubeUser/api/v1alpha1"
@@ -25,6 +26,14 @@ const (
 const (
 	DefaultTTL = "2160h" // 90 days
 )
+
+// ReservedIdentityPrefix is the prefix Kubernetes reserves for built-in
+// identities (system:masters, system:kube-controller-manager,
+// system:serviceaccount:*, etc.). A User whose metadata.name carries this
+// prefix would mint an x509 certificate whose Subject CN forges a privileged
+// identity, so every layer that can create a User or issue credentials
+// rejects it.
+const ReservedIdentityPrefix = "system:"
 
 // Provider defines the interface for authentication providers
 type Provider interface {
@@ -122,6 +131,26 @@ func (m *Manager) getProvider(user *authv1alpha1.User) (Provider, error) {
 	default:
 		return nil, fmt.Errorf("unsupported auth type: %s", authType)
 	}
+}
+
+// ValidateUserIdentity rejects User names that would forge a Kubernetes
+// built-in identity when embedded as the Subject CN of the generated x509
+// certificate. Called from the admission webhook (fast reject at create/update)
+// and from every reconciler entrypoint that mints credentials, so that a User
+// which somehow lands in etcd without passing the webhook (direct etcd write,
+// pre-existing object, misconfigured admission chain) still cannot be issued a
+// certificate.
+//
+// In practice kube-apiserver's RFC 1123 name validation already rejects the
+// ':' character in metadata.name on the normal API path, but that guarantee
+// is not part of our contract with the API server and defense in depth here
+// is cheap.
+func ValidateUserIdentity(user *authv1alpha1.User) error {
+	if strings.HasPrefix(user.Name, ReservedIdentityPrefix) {
+		return fmt.Errorf("metadata.name %q is invalid: names starting with %q are reserved for Kubernetes built-in identities and would forge a privileged certificate Subject CN",
+			user.Name, ReservedIdentityPrefix)
+	}
+	return nil
 }
 
 // ValidateAuthSpec validates the auth specification for the user
