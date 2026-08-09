@@ -61,6 +61,17 @@ type UserReconciler struct {
 // Admission resources
 // +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=validatingwebhookconfigurations,verbs=get;patch
 
+// Result label values recorded on the kubeuser_reconciliations_total metric.
+const (
+	reconcileResultNotFound       = "not_found"
+	reconcileResultDeleted        = "deleted"
+	reconcileResultError          = "error"
+	reconcileResultFinalizerAdded = "finalizer_added"
+	reconcileResultConflict       = "conflict"
+	reconcileResultRequeued       = "requeued"
+	reconcileResultSuccess        = "success"
+)
+
 // Reconcile orchestrates the user reconciliation process as a pure orchestrator.
 // It implements an idempotent update pattern to minimize etcd writes and prevent infinite loops.
 func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -93,7 +104,7 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	var user authv1alpha1.User
 	if err := r.Get(ctx, req.NamespacedName, &user); err != nil {
 		logger.Info("User not found, ignoring", "user", req.Name, "error", err)
-		reconcileResult = "not_found"
+		reconcileResult = reconcileResultNotFound
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
@@ -110,14 +121,32 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 	// 2. Handle Deletion
 	if !user.DeletionTimestamp.IsZero() {
-		reconcileResult = "deleted"
+		reconcileResult = reconcileResultDeleted
 		return ctrl.Result{}, r.handleDeletion(ctx, &user)
 	}
 
-	// Ensure finalizer
-	if err := r.ensureFinalizer(ctx, &user); err != nil {
-		reconcileResult = "error"
+	// Ensure finalizer. When this call performs an API update, the in-memory
+	// object must not be reused for further writes in this pass (issue #58):
+	// any concurrent mutation landing while business logic runs would make the
+	// final Status().Update fail with a conflict, discarding its output. End
+	// the pass instead. The successful update produces a watch event that is
+	// handed to this controller only after the informer cache has absorbed the
+	// update, so the pass that event triggers starts from a fresh Get. A pass
+	// triggered earlier by some other queued event can still read the older
+	// cache; it then re-attempts the add, conflicts harmlessly on the write,
+	// and retries with backoff, never reaching business logic with a stale
+	// object. An explicit Requeue here would make that stale re-entry the
+	// common case instead of the rare exception, which is why none is set.
+	finalizerAdded, err := r.ensureFinalizer(ctx, &user)
+	if err != nil {
+		reconcileResult = reconcileResultError
 		return ctrl.Result{}, err
+	}
+	if finalizerAdded {
+		logger.Info("=== END RECONCILE (FINALIZER ADDED) ===",
+			"reason", "watch event from the finalizer update triggers the next pass on a fresh object")
+		reconcileResult = reconcileResultFinalizerAdded
+		return ctrl.Result{}, nil
 	}
 
 	// 3. Run Business Logic
@@ -141,29 +170,49 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	// 5. ONE Status Update call (if needed)
 	if statusChanged {
 		if updateErr := r.Status().Update(ctx, &user); updateErr != nil {
+			// On an optimistic-concurrency conflict the computed status is
+			// discarded and recomputed on the next pass. Record what was lost
+			// so the discard is visible in logs (issue #58), then requeue in
+			// 5 seconds WITHOUT returning the error: conflicts are expected
+			// contention, and returning a non-nil error would make
+			// controller-runtime ignore the RequeueAfter, retry on its
+			// millisecond-scale rate-limiter backoff instead, and double-log
+			// the conflict at error level.
+			if apierrors.IsConflict(updateErr) {
+				logger.Info("Status update conflicted with a concurrent write, discarding computed status and requeueing",
+					"discardedPhase", user.Status.Phase,
+					"discardedRotationStep", user.Status.RotationStep,
+					"discardedMessage", user.Status.Message)
+				reconcileResult = reconcileResultConflict
+				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+			}
 			logger.Error(updateErr, "Failed to update user status")
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, updateErr
+			reconcileResult = reconcileResultError
+			// Return the error alone: controller-runtime ignores any Result
+			// when the error is non-nil and requeues with backoff, so a
+			// RequeueAfter here would be dead code.
+			return ctrl.Result{}, updateErr
 		}
 		logger.Info("Status updated successfully", "phase", user.Status.Phase, "rotationStep", user.Status.RotationStep)
 	}
 
 	// Handle any error that occurred during business logic after status update
 	if err != nil {
-		reconcileResult = "error"
+		reconcileResult = reconcileResultError
 		return r.handleError(ctx, &user, err)
 	}
 
 	// 6. Return pending result if one was captured (e.g., immediate requeue for Shadow Secret creation)
 	if pendingResult != nil {
 		logger.Info("=== END RECONCILE (PENDING REQUEUE) ===", "requeueAfter", pendingResult.RequeueAfter)
-		reconcileResult = "requeued"
+		reconcileResult = reconcileResultRequeued
 		return *pendingResult, nil
 	}
 
 	// 7. Calculate Requeue
 	requeueResult := r.calculateRequeue(ctx, &user)
 	logger.Info("=== END RECONCILE ===", "requeueAfter", requeueResult.RequeueAfter, "statusCommitted", statusChanged)
-	reconcileResult = "success"
+	reconcileResult = reconcileResultSuccess
 
 	// Update user sync status metric
 	if r.Metrics != nil {
@@ -301,19 +350,24 @@ func (r *UserReconciler) handleDeletion(ctx context.Context, user *authv1alpha1.
 }
 
 // ensureFinalizer adds the user finalizer if not present.
-func (r *UserReconciler) ensureFinalizer(ctx context.Context, user *authv1alpha1.User) error {
+// It returns true when the finalizer was added by this call, meaning an API
+// update was performed and the caller must end the current reconcile pass
+// instead of reusing the object for further writes (issue #58).
+func (r *UserReconciler) ensureFinalizer(ctx context.Context, user *authv1alpha1.User) (bool, error) {
 	logger := logf.FromContext(ctx)
 
-	if !helpers.ContainsString(user.Finalizers, authv1alpha1.UserFinalizer) {
-		logger.Info("Adding finalizer", "finalizer", authv1alpha1.UserFinalizer)
-		user.Finalizers = append(user.Finalizers, authv1alpha1.UserFinalizer)
-		if err := r.Update(ctx, user); err != nil {
-			logger.Error(err, "Failed to add finalizer")
-			return err
-		}
-		logger.Info("Successfully added finalizer")
+	if helpers.ContainsString(user.Finalizers, authv1alpha1.UserFinalizer) {
+		return false, nil
 	}
-	return nil
+
+	logger.Info("Adding finalizer", "finalizer", authv1alpha1.UserFinalizer)
+	user.Finalizers = append(user.Finalizers, authv1alpha1.UserFinalizer)
+	if err := r.Update(ctx, user); err != nil {
+		logger.Error(err, "Failed to add finalizer")
+		return false, err
+	}
+	logger.Info("Successfully added finalizer")
+	return true, nil
 }
 
 // reconcileRBAC handles both RoleBindings and ClusterRoleBindings reconciliation.
