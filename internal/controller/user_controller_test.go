@@ -79,10 +79,19 @@ var _ = Describe("User Controller", func() {
 				Scheme: k8sClient.Scheme(),
 			}
 
+			// The first pass persists the finalizer and ends (issue #58
+			// fresh-object pattern); the second pass runs the business logic.
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, typeNamespacedName, user)).To(Succeed())
+			Expect(user.Finalizers).To(ContainElement(authv1alpha1.UserFinalizer))
 			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
 			// Example: If you expect a certain status condition after reconciliation, verify it here.
 		})
