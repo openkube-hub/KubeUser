@@ -57,7 +57,15 @@ Counter tracking total reconciliation attempts.
 
 Labels:
 - `controller`: Controller name (e.g., `user`)
-- `result`: Reconciliation result (`success`, `error`, `requeued`, `deleted`, `not_found`)
+- `result`: Reconciliation result (`success`, `error`, `conflict`, `requeued`, `finalizer_added`, `deleted`, `not_found`)
+
+Notable result values:
+- `finalizer_added`: a first reconcile pass that persisted the finalizer and
+  ended; the watch event from that write triggers the business-logic pass.
+- `conflict`: a status update lost an optimistic-concurrency race with a
+  concurrent writer and was discarded; the reconcile requeues in 5 seconds
+  and recomputes. Sustained non-zero rates indicate another writer fighting
+  over the same objects. These are not counted as `error`.
 
 #### `kubeuser_reconcile_duration_seconds`
 Histogram tracking reconciliation loop duration.
@@ -73,7 +81,7 @@ Gauge tracking the number of items waiting in the controller work queue (i.e., r
 Labels:
 - `name`: Controller queue name (e.g., `user`)
 
-> **Note:** `kubeuser_workqueue_depth` was removed. Use `workqueue_depth{name="user"}` as the practical replacement — it tracks reconciliation backlog, which is the actionable signal for SRE monitoring and alerting. `controller_runtime_active_workers{controller="user"}` is also exposed automatically but is bounded by `MaxConcurrentReconciles` (default `1`), so it's only meaningful when concurrency is tuned up.
+> **Note:** `kubeuser_workqueue_depth` was removed. Use `workqueue_depth{name="user"}` as the practical replacement: it tracks reconciliation backlog, which is the actionable signal for SRE monitoring and alerting. `controller_runtime_active_workers{controller="user"}` is also exposed automatically but is bounded by `MaxConcurrentReconciles` (default `1`), so it's only meaningful when concurrency is tuned up.
 
 ### Thundering Herd Protection
 
