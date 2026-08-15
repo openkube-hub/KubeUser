@@ -118,6 +118,7 @@ For production installs, see [Installation](#installation) below.
 - [ ] **ECDSA Key Support** — configurable key algorithm via `spec.auth.keyAlgorithm`
 - [ ] **OpenTelemetry Tracing** — end-to-end traces across reconcile and rotation paths
 - [ ] **Example Role Manifests** — a curated folder of well-defined, ready-to-apply `Role`/`ClusterRole` YAMLs for common access patterns (read-only, developer, namespace-admin) that users can reference directly
+- [ ] **Self-Service Kubeconfig Bootstrap & Sync** — `kubeuser init`/`kubeuser sync` CLI with email-delivered, single-use bootstrap tokens and mTLS-authenticated credential sync ([tracking epic](https://github.com/openkube-hub/KubeUser/issues/111))
 
 ---
 
