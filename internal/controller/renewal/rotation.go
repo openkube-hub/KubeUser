@@ -384,8 +384,9 @@ func (rm *RotationManager) createShadowSecretForRotation(ctx context.Context, us
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					APIVersion:         user.APIVersion,
-					Kind:               user.Kind,
+					// Hardcoded: cache-returned objects have empty TypeMeta and GC ignores refs with empty APIVersion/Kind.
+					APIVersion:         authv1alpha1.GroupVersion.String(),
+					Kind:               "User",
 					Name:               user.Name,
 					UID:                user.UID,
 					Controller:         &[]bool{true}[0],
@@ -456,8 +457,9 @@ func (rm *RotationManager) ensureCSRExists(ctx context.Context, user *authv1alph
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					APIVersion:         user.APIVersion,
-					Kind:               user.Kind,
+					// Hardcoded: cache-returned objects have empty TypeMeta and GC ignores refs with empty APIVersion/Kind.
+					APIVersion:         authv1alpha1.GroupVersion.String(),
+					Kind:               "User",
 					Name:               user.Name,
 					UID:                user.UID,
 					Controller:         &[]bool{false}[0], // Not a controller reference to avoid conflicts

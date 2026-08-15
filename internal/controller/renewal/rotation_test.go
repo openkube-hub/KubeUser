@@ -11,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -382,6 +383,133 @@ func TestRotationManager_validateCSRForApproval(t *testing.T) {
 				t.Errorf("validateCSRForApproval() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestRotationManager_ShadowSecretHasValidOwnerReference is the regression guard
+// for the silent GC-orphan bug. The cache-backed client strips TypeMeta on
+// returned objects, so reading user.APIVersion/user.Kind at runtime yields
+// empty strings — and Kubernetes GC ignores OwnerReferences with an empty
+// APIVersion or Kind. Any future regression to `user.APIVersion`/`user.Kind`
+// here silently orphans the shadow secret (which contains a private key) when
+// the User is deleted with the finalizer removed manually.
+func TestRotationManager_ShadowSecretHasValidOwnerReference(t *testing.T) {
+	t.Setenv("KUBEUSER_NAMESPACE", "kubeuser")
+
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("scheme: %v", err)
+	}
+
+	cli := fake.NewClientBuilder().WithScheme(scheme).Build()
+	rm := NewRotationManager(cli, nil, "kubernetes.io/kube-apiserver-client", "", nil)
+
+	// Mimic the reconciler: the User comes from the informer cache with empty
+	// TypeMeta, exactly the condition that triggered the original bug.
+	user := &authv1alpha1.User{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "alice",
+			UID:  "12345678-1234-1234-1234-123456789012",
+		},
+	}
+
+	if err := rm.createShadowSecretForRotation(context.Background(), user); err != nil {
+		t.Fatalf("createShadowSecretForRotation: %v", err)
+	}
+
+	got := &corev1.Secret{}
+	if err := cli.Get(context.Background(), client.ObjectKey{Name: "alice-rotation-temp", Namespace: "kubeuser"}, got); err != nil {
+		t.Fatalf("get shadow secret: %v", err)
+	}
+
+	if len(got.OwnerReferences) != 1 {
+		t.Fatalf("expected exactly 1 OwnerReference, got %d", len(got.OwnerReferences))
+	}
+	ref := got.OwnerReferences[0]
+	if ref.APIVersion != authv1alpha1.GroupVersion.String() {
+		t.Errorf("OwnerReference.APIVersion = %q, want %q — empty or wrong APIVersion causes GC to skip this ref", ref.APIVersion, authv1alpha1.GroupVersion.String())
+	}
+	if ref.Kind != "User" {
+		t.Errorf("OwnerReference.Kind = %q, want %q — empty or wrong Kind causes GC to skip this ref", ref.Kind, "User")
+	}
+	if ref.Name != user.Name {
+		t.Errorf("OwnerReference.Name = %q, want %q", ref.Name, user.Name)
+	}
+	if ref.UID != user.UID {
+		t.Errorf("OwnerReference.UID = %q, want %q", ref.UID, user.UID)
+	}
+	if ref.Controller == nil || !*ref.Controller {
+		t.Errorf("OwnerReference.Controller = %v, want *true", ref.Controller)
+	}
+	if ref.BlockOwnerDeletion == nil || !*ref.BlockOwnerDeletion {
+		t.Errorf("OwnerReference.BlockOwnerDeletion = %v, want *true", ref.BlockOwnerDeletion)
+	}
+}
+
+// TestRotationManager_CSRHasValidOwnerReference is the regression guard for the
+// silent GC-orphan bug on renewal CSRs. See the shadow secret variant above for
+// the full explanation. This second test exists because the two OwnerReference
+// blocks are separate literals in the source and can regress independently.
+func TestRotationManager_CSRHasValidOwnerReference(t *testing.T) {
+	t.Setenv("KUBEUSER_NAMESPACE", "kubeuser")
+
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("corev1 scheme: %v", err)
+	}
+	if err := certv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("certv1 scheme: %v", err)
+	}
+
+	cli := fake.NewClientBuilder().WithScheme(scheme).Build()
+	rm := NewRotationManager(cli, nil, "kubernetes.io/kube-apiserver-client", "", nil)
+
+	user := &authv1alpha1.User{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "alice",
+			UID:  "12345678-1234-1234-1234-123456789012",
+		},
+	}
+
+	// Seed the shadow secret so we can reuse its key for the CSR path.
+	if err := rm.createShadowSecretForRotation(context.Background(), user); err != nil {
+		t.Fatalf("createShadowSecretForRotation: %v", err)
+	}
+	shadow := &corev1.Secret{}
+	if err := cli.Get(context.Background(), client.ObjectKey{Name: "alice-rotation-temp", Namespace: "kubeuser"}, shadow); err != nil {
+		t.Fatalf("get shadow secret: %v", err)
+	}
+
+	csrName := rm.generateUniqueCSRName(user.Name, string(user.UID))
+	got, err := rm.ensureCSRExists(context.Background(), user, csrName, user.Name, shadow.Data["key.pem"], time.Hour)
+	if err != nil {
+		t.Fatalf("ensureCSRExists: %v", err)
+	}
+	// Also re-read from the client so we assert what the API actually persisted, not just what we constructed.
+	if err := cli.Get(context.Background(), client.ObjectKey{Name: csrName}, got); err != nil {
+		t.Fatalf("get csr: %v", err)
+	}
+
+	if len(got.OwnerReferences) != 1 {
+		t.Fatalf("expected exactly 1 OwnerReference, got %d", len(got.OwnerReferences))
+	}
+	ref := got.OwnerReferences[0]
+	if ref.APIVersion != authv1alpha1.GroupVersion.String() {
+		t.Errorf("OwnerReference.APIVersion = %q, want %q — empty or wrong APIVersion causes GC to skip this ref", ref.APIVersion, authv1alpha1.GroupVersion.String())
+	}
+	if ref.Kind != "User" {
+		t.Errorf("OwnerReference.Kind = %q, want %q — empty or wrong Kind causes GC to skip this ref", ref.Kind, "User")
+	}
+	if ref.Name != user.Name {
+		t.Errorf("OwnerReference.Name = %q, want %q", ref.Name, user.Name)
+	}
+	if ref.UID != user.UID {
+		t.Errorf("OwnerReference.UID = %q, want %q", ref.UID, user.UID)
+	}
+	// The CSR ref is deliberately non-controller (per rotation.go comment) but
+	// must still block foreground deletion so orphaned certs cannot outlive the User.
+	if ref.BlockOwnerDeletion == nil || !*ref.BlockOwnerDeletion {
+		t.Errorf("OwnerReference.BlockOwnerDeletion = %v, want *true", ref.BlockOwnerDeletion)
 	}
 }
 
