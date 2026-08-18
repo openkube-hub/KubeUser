@@ -8,6 +8,7 @@ package cleanup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -21,9 +22,11 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// CleanupUserResources deletes resources owned by the user. Best-effort:
-// per-resource failures are logged but never block finalizer removal.
-func CleanupUserResources(ctx context.Context, r client.Client, user *authv1alpha1.User) {
+// CleanupUserResources deletes resources owned by the user. All per-resource
+// failures are logged AND aggregated into the returned error so the caller can
+// block finalizer removal — otherwise a partial cleanup would silently orphan
+// Secrets, CSRs, or RoleBindings the moment the finalizer is stripped.
+func CleanupUserResources(ctx context.Context, r client.Client, user *authv1alpha1.User) error {
 	// Finalizer cleanup must complete promptly to unblock the deletion path.
 	// The caller's context may already be bounded; this adds a firm local ceiling.
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -33,6 +36,8 @@ func CleanupUserResources(ctx context.Context, r client.Client, user *authv1alph
 	username := user.Name
 	userNamespace := helpers.GetKubeUserNamespace()
 	selector := client.MatchingLabels{authv1alpha1.UserLabel: username}
+
+	var errs []error
 
 	// Delete steady-state secrets by name. They aren't labelled at creation,
 	// so the label-selector passes below won't catch them.
@@ -44,6 +49,7 @@ func CleanupUserResources(ctx context.Context, r client.Client, user *authv1alph
 		if err := r.Delete(ctx, obj); client.IgnoreNotFound(err) != nil {
 			logger.Error(err, "failed to delete fixed resource",
 				"kind", "Secret", "name", obj.GetName(), "namespace", obj.GetNamespace())
+			errs = append(errs, fmt.Errorf("delete Secret %s/%s: %w", obj.GetNamespace(), obj.GetName(), err))
 		}
 	}
 
@@ -51,10 +57,12 @@ func CleanupUserResources(ctx context.Context, r client.Client, user *authv1alph
 	var secrets corev1.SecretList
 	if err := r.List(ctx, &secrets, selector, client.InNamespace(userNamespace)); err != nil {
 		logger.Error(err, "failed to list user-labelled secrets", "namespace", userNamespace)
+		errs = append(errs, fmt.Errorf("list labelled Secrets in %s: %w", userNamespace, err))
 	} else {
 		for i := range secrets.Items {
 			if err := r.Delete(ctx, &secrets.Items[i]); client.IgnoreNotFound(err) != nil {
 				logger.Error(err, "failed to delete labelled secret", "name", secrets.Items[i].Name)
+				errs = append(errs, fmt.Errorf("delete Secret %s/%s: %w", secrets.Items[i].Namespace, secrets.Items[i].Name, err))
 			}
 		}
 	}
@@ -64,10 +72,12 @@ func CleanupUserResources(ctx context.Context, r client.Client, user *authv1alph
 	var csrs certv1.CertificateSigningRequestList
 	if err := r.List(ctx, &csrs, selector); err != nil {
 		logger.Error(err, "failed to list user-labelled CSRs")
+		errs = append(errs, fmt.Errorf("list labelled CSRs: %w", err))
 	} else {
 		for i := range csrs.Items {
 			if err := r.Delete(ctx, &csrs.Items[i]); client.IgnoreNotFound(err) != nil {
 				logger.Error(err, "failed to delete labelled CSR", "name", csrs.Items[i].Name)
+				errs = append(errs, fmt.Errorf("delete CSR %s: %w", csrs.Items[i].Name, err))
 			}
 		}
 	}
@@ -76,11 +86,13 @@ func CleanupUserResources(ctx context.Context, r client.Client, user *authv1alph
 	var rbs rbacv1.RoleBindingList
 	if err := r.List(ctx, &rbs, selector); err != nil {
 		logger.Error(err, "failed to list user RoleBindings")
+		errs = append(errs, fmt.Errorf("list labelled RoleBindings: %w", err))
 	} else {
 		for i := range rbs.Items {
 			if err := r.Delete(ctx, &rbs.Items[i]); client.IgnoreNotFound(err) != nil {
 				logger.Error(err, "failed to delete RoleBinding",
 					"name", rbs.Items[i].Name, "namespace", rbs.Items[i].Namespace)
+				errs = append(errs, fmt.Errorf("delete RoleBinding %s/%s: %w", rbs.Items[i].Namespace, rbs.Items[i].Name, err))
 			}
 		}
 	}
@@ -89,11 +101,15 @@ func CleanupUserResources(ctx context.Context, r client.Client, user *authv1alph
 	var crbs rbacv1.ClusterRoleBindingList
 	if err := r.List(ctx, &crbs, selector); err != nil {
 		logger.Error(err, "failed to list user ClusterRoleBindings")
+		errs = append(errs, fmt.Errorf("list labelled ClusterRoleBindings: %w", err))
 	} else {
 		for i := range crbs.Items {
 			if err := r.Delete(ctx, &crbs.Items[i]); client.IgnoreNotFound(err) != nil {
 				logger.Error(err, "failed to delete ClusterRoleBinding", "name", crbs.Items[i].Name)
+				errs = append(errs, fmt.Errorf("delete ClusterRoleBinding %s: %w", crbs.Items[i].Name, err))
 			}
 		}
 	}
+
+	return errors.Join(errs...)
 }
