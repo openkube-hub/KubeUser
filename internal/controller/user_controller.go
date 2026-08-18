@@ -304,10 +304,15 @@ func (r *UserReconciler) handleDeletion(ctx context.Context, user *authv1alpha1.
 	logger.Info("User is being deleted, starting cleanup")
 
 	if helpers.ContainsString(user.Finalizers, authv1alpha1.UserFinalizer) {
-		// Step 1: Clean up all user resources BEFORE removing finalizer
-		// This ensures cleanup is complete even if finalizer removal fails
+		// Step 1: Clean up all user resources BEFORE removing finalizer.
+		// If any deletion fails, keep the finalizer so a later reconcile can
+		// retry — dropping it here would strip the safety net and orphan the
+		// resources the cleanup was unable to remove.
 		logger.Info("Cleaning up user resources")
-		cleanup.CleanupUserResources(ctx, r.Client, user)
+		if err := cleanup.CleanupUserResources(ctx, r.Client, user); err != nil {
+			logger.Error(err, "Cleanup failed, retaining finalizer to retry")
+			return err
+		}
 
 		// Step 2: Remove finalizer as the absolute last step
 		logger.Info("Removing finalizer")
