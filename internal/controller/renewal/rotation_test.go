@@ -54,6 +54,34 @@ func TestRotationManager_generateUniqueCSRName(t *testing.T) {
 	}
 }
 
+// TestRotationManager_concurrentRotationsIsPerInstance pins the invariant that
+// each RotationManager owns its own in-flight counter. When the counter was a
+// package-level var, parallel tests observed each other's increments and one
+// manager's metric reading reflected the sum across every manager in the
+// process rather than its own workload.
+func TestRotationManager_concurrentRotationsIsPerInstance(t *testing.T) {
+	rmA := NewRotationManager(nil, nil, "", "", nil)
+	rmB := NewRotationManager(nil, nil, "", "", nil)
+
+	rmA.concurrentRotations.Add(1)
+	rmA.concurrentRotations.Add(1)
+
+	if got := rmA.concurrentRotations.Load(); got != 2 {
+		t.Errorf("rmA.concurrentRotations = %d, want 2", got)
+	}
+	if got := rmB.concurrentRotations.Load(); got != 0 {
+		t.Errorf("rmB.concurrentRotations = %d, want 0; counter leaked between RotationManager instances", got)
+	}
+
+	rmB.concurrentRotations.Add(5)
+	if got := rmA.concurrentRotations.Load(); got != 2 {
+		t.Errorf("rmA.concurrentRotations = %d after mutating rmB, want 2; counter leaked between RotationManager instances", got)
+	}
+	if got := rmB.concurrentRotations.Load(); got != 5 {
+		t.Errorf("rmB.concurrentRotations = %d, want 5", got)
+	}
+}
+
 func TestRotationManagerBuildKubeconfigUsesConfiguredClusterName(t *testing.T) {
 	rm := NewRotationManager(nil, nil, "", "production", nil)
 
