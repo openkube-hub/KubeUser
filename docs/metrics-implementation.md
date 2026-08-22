@@ -33,7 +33,7 @@ Metrics are integrated throughout the controller:
 #### Performance
 - `kubeuser_reconciliations_total` - Reconciliation attempts
 - `kubeuser_reconcile_duration_seconds` - Reconciliation duration
-- `kubeuser_workqueue_depth` - Work queue depth
+- `workqueue_depth{name="user"}` - Work queue depth (exposed by controller-runtime)
 
 #### Thundering Herd Protection
 - `kubeuser_concurrent_rotations` - Active rotations

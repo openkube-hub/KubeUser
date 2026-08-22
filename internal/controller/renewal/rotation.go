@@ -46,9 +46,6 @@ const (
 	RotationStateError
 )
 
-// concurrentRotations tracks how many certificate rotations are in progress across all users.
-var concurrentRotations int64
-
 // RotationManager handles atomic certificate rotation with forward secrecy
 type RotationManager struct {
 	client        client.Client
@@ -56,6 +53,9 @@ type RotationManager struct {
 	signerName    string // Configurable signer for managed K8s support (EKS, GKE, AKS)
 	clusterName   string // Configurable kubeconfig cluster name
 	metrics       *metrics.Recorder
+	// concurrentRotations tracks in-flight rotations owned by this manager
+	// instance. Per-instance so parallel tests do not share a global counter.
+	concurrentRotations atomic.Int64
 }
 
 // NewRotationManager creates a new rotation manager with configurable signer
@@ -87,13 +87,13 @@ func (rm *RotationManager) RotateUserCertificate(ctx context.Context, user *auth
 	username := user.Name
 
 	// Track concurrent rotations
-	current := atomic.AddInt64(&concurrentRotations, 1)
+	current := rm.concurrentRotations.Add(1)
 	if rm.metrics != nil {
 		rm.metrics.SetConcurrentRotations(int(current))
 		rm.metrics.SetRotationQueueLength(int(current))
 	}
 	defer func() {
-		remaining := atomic.AddInt64(&concurrentRotations, -1)
+		remaining := rm.concurrentRotations.Add(-1)
 		if rm.metrics != nil {
 			rm.metrics.ObserveCertRotationDuration(user.Namespace, time.Since(start))
 			rm.metrics.SetConcurrentRotations(int(remaining))

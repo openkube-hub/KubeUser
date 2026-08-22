@@ -80,10 +80,10 @@ else
     echo -e "${YELLOW}⚠ kubeuser_users_total (will appear after users are created)${NC}"
 fi
 
-if echo "$METRICS" | grep -q "kubeuser_workqueue_depth"; then
-    echo -e "${GREEN}✓ kubeuser_workqueue_depth${NC}"
+if echo "$METRICS" | grep -q '^workqueue_depth{[^}]*name="user"'; then
+    echo -e "${GREEN}✓ workqueue_depth{name=\"user\"} (controller-runtime built-in)${NC}"
 else
-    echo -e "${YELLOW}⚠ kubeuser_workqueue_depth (will appear during reconciliation)${NC}"
+    echo -e "${YELLOW}⚠ workqueue_depth{name=\"user\"} (will appear during reconciliation)${NC}"
 fi
 echo ""
 
