@@ -1,8 +1,17 @@
 package certs
 
 import (
+	"context"
+	"strings"
 	"testing"
 	"time"
+
+	authv1alpha1 "github.com/openkube-hub/KubeUser/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func TestGetRotationThreshold(t *testing.T) {
@@ -189,6 +198,129 @@ func TestBuildCertKubeconfigWithClusterName(t *testing.T) {
 		if !contains(got, expected) {
 			t.Errorf("BuildCertKubeconfigWithClusterName() missing expected string: %s", expected)
 		}
+	}
+}
+
+// TestEnsurePrivateKey_RefusesUnownedKeySecret is the regression guard for the
+// initial-issuance variant of issue #115. Before the fix, ensurePrivateKey used
+// any pre-existing `<user>-key` Secret verbatim. A caller with `create` on
+// Secrets in the operator namespace could plant a key Secret before the target
+// User was first reconciled and the operator would seal that attacker-owned
+// key into the generated kubeconfig on initial issuance. The fixed code refuses
+// to reuse a key Secret whose OwnerReferences do not confirm this User created
+// it.
+func TestEnsurePrivateKey_RefusesUnownedKeySecret(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("scheme: %v", err)
+	}
+
+	impostor := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "alice-key",
+			Namespace: "kubeuser",
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{"key.pem": []byte("attacker-controlled-key-material")},
+	}
+
+	cli := fake.NewClientBuilder().WithScheme(scheme).WithObjects(impostor).Build()
+	user := &authv1alpha1.User{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "alice",
+			UID:  "12345678-1234-1234-1234-123456789012",
+		},
+	}
+
+	_, err := ensurePrivateKey(context.Background(), cli, user, "alice-key", "kubeuser")
+	if err == nil {
+		t.Fatal("ensurePrivateKey accepted a Secret with no OwnerReferences — planted attacker key would be used for initial issuance")
+	}
+	if !strings.Contains(err.Error(), "not owned by user") {
+		t.Errorf("error = %v, want it to mention the ownership refusal", err)
+	}
+}
+
+// TestEnsurePrivateKey_RefusesKeySecretOwnedByOtherUser guards against the
+// UID-mismatch case (e.g. leftover from a deleted-and-recreated User with the
+// same name, or an attacker who guessed the schema).
+func TestEnsurePrivateKey_RefusesKeySecretOwnedByOtherUser(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("scheme: %v", err)
+	}
+
+	impostor := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "alice-key",
+			Namespace: "kubeuser",
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion: authv1alpha1.GroupVersion.String(),
+					Kind:       "User",
+					Name:       "alice",
+					UID:        "some-other-uid",
+				},
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{"key.pem": []byte("attacker-controlled-key-material")},
+	}
+
+	cli := fake.NewClientBuilder().WithScheme(scheme).WithObjects(impostor).Build()
+	user := &authv1alpha1.User{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "alice",
+			UID:  "12345678-1234-1234-1234-123456789012",
+		},
+	}
+
+	_, err := ensurePrivateKey(context.Background(), cli, user, "alice-key", "kubeuser")
+	if err == nil {
+		t.Fatal("ensurePrivateKey accepted a Secret owned by a different UID — key material from a stale/foreign User was used")
+	}
+}
+
+// TestEnsurePrivateKey_SetsOwnerReferencesOnCreate is the paired invariant: the
+// read-path trust check only works if the create path plants a matching
+// OwnerReference. Without this, every subsequent reconcile of the same User
+// would refuse the freshly created key.
+func TestEnsurePrivateKey_SetsOwnerReferencesOnCreate(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("scheme: %v", err)
+	}
+
+	cli := fake.NewClientBuilder().WithScheme(scheme).Build()
+	user := &authv1alpha1.User{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "alice",
+			UID:  "12345678-1234-1234-1234-123456789012",
+		},
+	}
+
+	if _, err := ensurePrivateKey(context.Background(), cli, user, "alice-key", "kubeuser"); err != nil {
+		t.Fatalf("ensurePrivateKey (create path): %v", err)
+	}
+
+	got := &corev1.Secret{}
+	if err := cli.Get(context.Background(), client.ObjectKey{Name: "alice-key", Namespace: "kubeuser"}, got); err != nil {
+		t.Fatalf("get created key secret: %v", err)
+	}
+	if len(got.OwnerReferences) != 1 {
+		t.Fatalf("created key secret OwnerReferences count = %d, want 1", len(got.OwnerReferences))
+	}
+	ref := got.OwnerReferences[0]
+	if ref.Kind != "User" || ref.UID != user.UID {
+		t.Errorf("OwnerReference = (Kind=%q, UID=%q), want (User, %q)", ref.Kind, ref.UID, user.UID)
+	}
+	if ref.APIVersion != authv1alpha1.GroupVersion.String() {
+		t.Errorf("OwnerReference.APIVersion = %q, want %q (empty APIVersion causes GC to skip the ref)", ref.APIVersion, authv1alpha1.GroupVersion.String())
+	}
+
+	// Round-trip: a follow-up call must recognise the just-created secret as trusted.
+	if _, err := ensurePrivateKey(context.Background(), cli, user, "alice-key", "kubeuser"); err != nil {
+		t.Errorf("second ensurePrivateKey call refused the operator-created key: %v", err)
 	}
 }
 

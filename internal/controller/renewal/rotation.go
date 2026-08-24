@@ -112,6 +112,25 @@ func (rm *RotationManager) RotateUserCertificate(ctx context.Context, user *auth
 
 	// If Shadow Secret exists, we MUST be in Renewing state regardless of User.Status.Phase
 	if shadowExists {
+		// Trust check: any resource sitting at the shadow-secret name that this
+		// operator did not create is treated as externally planted. Resuming
+		// rotation from it would build a CSR against the planted private key and
+		// write that key into <user>-kubeconfig on the atomic flip.
+		if !helpers.IsOwnedByUser(shadowSecret, user) {
+			logger.Error(nil, "Shadow Secret is not owned by this User, refusing to resume rotation from it",
+				"shadowSecret", shadowSecret.Name, "userUID", user.UID)
+			rm.eventRecorder.Event(user, "Warning", "ShadowSecretUntrusted",
+				"Found a shadow secret not owned by this User; deleting it and refusing to resume rotation")
+			if rm.metrics != nil {
+				rm.metrics.RecordRotationError(user.Namespace, username, "shadow_secret_untrusted")
+			}
+			if err := rm.deleteShadowSecret(ctx, username); err != nil {
+				return false, nil, fmt.Errorf("failed to delete untrusted shadow secret: %w", err)
+			}
+			return false, nil, fmt.Errorf("shadow secret %s is not owned by user %s (uid=%s); deleted and refusing to resume",
+				shadowSecret.Name, username, user.UID)
+		}
+
 		logger.Info("Shadow Secret found, ensuring Renewing state", "shadowSecret", shadowSecret.Name)
 
 		// Force status to reflect the rotation state (Shadow Secret as Source of Truth)
@@ -685,11 +704,23 @@ func (rm *RotationManager) atomicSecretUpdate(ctx context.Context, user *authv1a
 		oldCfgSecret = nil // No existing secret to backup
 	}
 
-	// Update key secret first with ResourceVersion checking
+	// Update key secret first with ResourceVersion checking. Owner refs are set
+	// so ensurePrivateKey's trust check on the next reconcile recognizes this
+	// secret as operator-created rather than treating it as externally planted.
 	keySecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      keySecretName,
 			Namespace: userNamespace,
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion:         authv1alpha1.GroupVersion.String(),
+					Kind:               "User",
+					Name:               user.Name,
+					UID:                user.UID,
+					Controller:         &[]bool{true}[0],
+					BlockOwnerDeletion: &[]bool{true}[0],
+				},
+			},
 		},
 		Type: corev1.SecretTypeOpaque,
 		Data: map[string][]byte{
