@@ -235,7 +235,7 @@ func ensureSignedCertificate(ctx context.Context, r client.Client, user *authv1a
 	}
 
 	// Get or create CSR
-	csr, err := getOrCreateCSR(ctx, r, csrName, username, csrPEM, duration, signerName)
+	csr, err := getOrCreateCSR(ctx, r, csrName, username, csrPEM, keyPEM, duration, signerName)
 	if err != nil {
 		return nil, false, err
 	}
@@ -246,7 +246,7 @@ func ensureSignedCertificate(ctx context.Context, r client.Client, user *authv1a
 
 	// Approve CSR if needed
 	if needsApproval(csr) {
-		if err := approveCSR(ctx, r, csr, csrName); err != nil {
+		if err := approveCSR(ctx, r, csr, csrName, username, keyPEM, signerName); err != nil {
 			return nil, false, err
 		}
 		return nil, true, nil
@@ -264,19 +264,29 @@ func ensureSignedCertificate(ctx context.Context, r client.Client, user *authv1a
 	return csr.Status.Certificate, false, nil
 }
 
-// getOrCreateCSR retrieves an existing CSR or creates a new one
-// Returns (csr, error) where csr is nil if a new CSR was just created
-func getOrCreateCSR(ctx context.Context, r client.Client, csrName, username string, csrPEM []byte, duration time.Duration, signerName string) (*certv1.CertificateSigningRequest, error) {
+// getOrCreateCSR retrieves an existing CSR or creates a new one.
+// If a CSR already exists under the deterministic name, it is validated against
+// the operator's stored private key and expected spec; a mismatch (which would
+// indicate an attacker pre-planted a CSR to be signed under our name) triggers
+// delete-and-recreate rather than reuse.
+// Returns (csr, error) where csr is nil if a new CSR was just created.
+func getOrCreateCSR(ctx context.Context, r client.Client, csrName, username string, csrPEM, keyPEM []byte, duration time.Duration, signerName string) (*certv1.CertificateSigningRequest, error) {
 	logger := logf.FromContext(ctx)
 
 	var csr certv1.CertificateSigningRequest
 	err := r.Get(ctx, types.NamespacedName{Name: csrName}, &csr)
 
 	if err == nil {
-		return &csr, nil
-	}
-
-	if !apierrors.IsNotFound(err) {
+		if valErr := validateOperatorCSR(&csr, username, signerName, keyPEM); valErr != nil {
+			logger.Info("Existing CSR failed operator validation, replacing", "csr", csrName, "reason", valErr.Error())
+			if delErr := r.Delete(ctx, &csr); delErr != nil && !apierrors.IsNotFound(delErr) {
+				return nil, fmt.Errorf("failed to delete untrusted CSR %s: %w", csrName, delErr)
+			}
+			// Fall through to create a fresh CSR bound to the operator's key.
+		} else {
+			return &csr, nil
+		}
+	} else if !apierrors.IsNotFound(err) {
 		return nil, fmt.Errorf("failed to get CSR: %w", err)
 	}
 
@@ -305,6 +315,38 @@ func getOrCreateCSR(ctx context.Context, r client.Client, csrName, username stri
 	return nil, nil
 }
 
+// validateOperatorCSR checks that a CSR is one the operator would have created
+// for this user: expected signer, ClientAuth-only usages, CommonName == user,
+// no Subject.Organization, and — critically — a public key matching the
+// operator-held private key. Any failure means the CSR is not trustworthy for
+// auto-approval.
+func validateOperatorCSR(csr *certv1.CertificateSigningRequest, username, signerName string, keyPEM []byte) error {
+	if csr.Spec.SignerName != signerName {
+		return fmt.Errorf("signer %q does not match expected %q", csr.Spec.SignerName, signerName)
+	}
+	if len(csr.Spec.Usages) != 1 || csr.Spec.Usages[0] != certv1.UsageClientAuth {
+		return fmt.Errorf("usages %v do not match expected [%s]", csr.Spec.Usages, certv1.UsageClientAuth)
+	}
+	block, _ := pem.Decode(csr.Spec.Request)
+	if block == nil || block.Type != "CERTIFICATE REQUEST" {
+		return errors.New("invalid CSR PEM in Spec.Request")
+	}
+	req, err := x509.ParseCertificateRequest(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("parse CSR: %w", err)
+	}
+	if req.Subject.CommonName != username {
+		return fmt.Errorf("CommonName %q does not match user %q", req.Subject.CommonName, username)
+	}
+	if len(req.Subject.Organization) > 0 {
+		return fmt.Errorf("Subject.Organization %v is not permitted (operator never sets groups)", req.Subject.Organization)
+	}
+	if err := helpers.VerifyCSRMatchesKey(csr.Spec.Request, keyPEM); err != nil {
+		return err
+	}
+	return nil
+}
+
 // needsApproval checks if a CSR needs approval
 func needsApproval(csr *certv1.CertificateSigningRequest) bool {
 	for _, c := range csr.Status.Conditions {
@@ -315,10 +357,19 @@ func needsApproval(csr *certv1.CertificateSigningRequest) bool {
 	return true
 }
 
-// approveCSR auto-approves a CSR
-func approveCSR(ctx context.Context, r client.Client, csr *certv1.CertificateSigningRequest, csrName string) error {
+// approveCSR auto-approves a CSR after validating it belongs to the operator.
+// The validation guards against approving a pre-planted attacker CSR (see #114):
+// the request must use the expected signer, ClientAuth-only usages, match the
+// user's CommonName with no Subject.Organization, and — critically — its
+// public key must match the operator-held private key.
+func approveCSR(ctx context.Context, r client.Client, csr *certv1.CertificateSigningRequest, csrName, username string, keyPEM []byte, signerName string) error {
 	logger := logf.FromContext(ctx)
-	logger.Info("Auto-approving CSR", "csr", csrName)
+
+	if err := validateOperatorCSR(csr, username, signerName, keyPEM); err != nil {
+		return fmt.Errorf("refusing to approve CSR %s: %w", csrName, err)
+	}
+
+	logger.Info("Auto-approving validated CSR", "csr", csrName)
 
 	csr.Status.Conditions = append(csr.Status.Conditions, certv1.CertificateSigningRequestCondition{
 		Type:           certv1.CertificateApproved,

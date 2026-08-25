@@ -234,7 +234,7 @@ func (rm *RotationManager) continueRotationFromShadow(ctx context.Context, user 
 	}
 
 	// Step 3: Check CSR status and approve if needed
-	approved, signedCert, err := rm.ensureCSRApprovedAndGetCert(ctx, csrName)
+	approved, signedCert, err := rm.ensureCSRApprovedAndGetCert(ctx, csrName, username, keyPEM)
 	if err != nil {
 		rm.eventRecorder.Event(user, "Warning", "CSRApprovalFailed", fmt.Sprintf("Failed to approve CSR %s: %v", csrName, err))
 		if rm.metrics != nil {
@@ -442,7 +442,11 @@ func (rm *RotationManager) deleteShadowSecret(ctx context.Context, username stri
 	return nil
 }
 
-// ensureCSRExists creates CSR if it doesn't exist, returns existing one otherwise
+// ensureCSRExists creates CSR if it doesn't exist, returns existing one otherwise.
+// A pre-existing CSR under this deterministic name is validated against the
+// shadow-secret key before reuse; a mismatch (attacker-planted CSR under our
+// name — see #114) triggers delete-and-recreate so the operator only ever
+// signs a request bound to its own key.
 func (rm *RotationManager) ensureCSRExists(ctx context.Context, user *authv1alpha1.User, csrName, username string, keyPEM []byte, certDuration time.Duration) (*certv1.CertificateSigningRequest, error) {
 	logger := logf.FromContext(ctx)
 
@@ -450,11 +454,17 @@ func (rm *RotationManager) ensureCSRExists(ctx context.Context, user *authv1alph
 	var existingCSR certv1.CertificateSigningRequest
 	err := rm.client.Get(ctx, types.NamespacedName{Name: csrName}, &existingCSR)
 	if err == nil {
-		logger.Info("Found existing CSR", "csrName", csrName)
-		return &existingCSR, nil
-	}
-
-	if !apierrors.IsNotFound(err) {
+		if valErr := rm.validateCSRForApproval(&existingCSR, username, keyPEM); valErr != nil {
+			logger.Info("Existing CSR failed operator validation, replacing", "csrName", csrName, "reason", valErr.Error())
+			if delErr := rm.client.Delete(ctx, &existingCSR); delErr != nil && !apierrors.IsNotFound(delErr) {
+				return nil, fmt.Errorf("failed to delete untrusted CSR %s: %w", csrName, delErr)
+			}
+			// Fall through to recreate a CSR bound to the shadow-secret key.
+		} else {
+			logger.Info("Found existing CSR", "csrName", csrName)
+			return &existingCSR, nil
+		}
+	} else if !apierrors.IsNotFound(err) {
 		return nil, fmt.Errorf("failed to check for existing CSR: %w", err)
 	}
 
@@ -504,7 +514,7 @@ func (rm *RotationManager) ensureCSRExists(ctx context.Context, user *authv1alph
 }
 
 // ensureCSRApproved approves the CSR if not already approved
-func (rm *RotationManager) ensureCSRApproved(ctx context.Context, csr *certv1.CertificateSigningRequest) (bool, error) {
+func (rm *RotationManager) ensureCSRApproved(ctx context.Context, csr *certv1.CertificateSigningRequest, expectedUsername string, expectedKeyPEM []byte) (bool, error) {
 	logger := logf.FromContext(ctx)
 
 	// Check if already approved
@@ -518,7 +528,7 @@ func (rm *RotationManager) ensureCSRApproved(ctx context.Context, csr *certv1.Ce
 	}
 
 	// Validate CSR before approval for security
-	if err := rm.validateCSRForApproval(csr); err != nil {
+	if err := rm.validateCSRForApproval(csr, expectedUsername, expectedKeyPEM); err != nil {
 		logger.Error(err, "CSR validation failed", "csrName", csr.Name)
 		return false, fmt.Errorf("CSR validation failed: %w", err)
 	}
@@ -556,7 +566,7 @@ func (rm *RotationManager) ensureCSRApproved(ctx context.Context, csr *certv1.Ce
 }
 
 // ensureCSRApprovedAndGetCert checks CSR status, approves if needed, and returns signed certificate
-func (rm *RotationManager) ensureCSRApprovedAndGetCert(ctx context.Context, csrName string) (bool, []byte, error) {
+func (rm *RotationManager) ensureCSRApprovedAndGetCert(ctx context.Context, csrName, expectedUsername string, expectedKeyPEM []byte) (bool, []byte, error) {
 	logger := logf.FromContext(ctx)
 
 	// Get the CSR
@@ -580,7 +590,7 @@ func (rm *RotationManager) ensureCSRApprovedAndGetCert(ctx context.Context, csrN
 
 	// If not approved, approve it
 	if !approved {
-		_, err := rm.ensureCSRApproved(ctx, csr)
+		_, err := rm.ensureCSRApproved(ctx, csr, expectedUsername, expectedKeyPEM)
 		if err != nil {
 			return false, nil, err
 		}
@@ -915,8 +925,12 @@ func (rm *RotationManager) extractCertificateExpiry(certData []byte) (time.Time,
 	return certs.ExtractCertificateExpiryWithFormatDetection(certData)
 }
 
-// validateCSRForApproval validates a CSR before auto-approval for security
-func (rm *RotationManager) validateCSRForApproval(csr *certv1.CertificateSigningRequest) error {
+// validateCSRForApproval validates a CSR before auto-approval for security.
+// expectedUsername and expectedKeyPEM come from the caller (the shadow secret's
+// key and the User the operator is rotating), not from the CSR itself — a CSR
+// pre-planted by an attacker under the deterministic name would otherwise be
+// self-attesting and pass the CN/label checks trivially (see #114).
+func (rm *RotationManager) validateCSRForApproval(csr *certv1.CertificateSigningRequest, expectedUsername string, expectedKeyPEM []byte) error {
 	// Validate signer name matches configured signer (supports managed K8s)
 	if csr.Spec.SignerName != rm.signerName {
 		return fmt.Errorf("invalid signer name: %s (expected: %s)", csr.Spec.SignerName, rm.signerName)
@@ -958,10 +972,23 @@ func (rm *RotationManager) validateCSRForApproval(csr *certv1.CertificateSigning
 		return fmt.Errorf("failed to parse CSR: %w", err)
 	}
 
-	// Validate common name matches expected user
-	expectedUsername := csr.Labels[authv1alpha1.UserLabel]
+	// Validate common name matches the user the operator is rotating.
 	if csrReq.Subject.CommonName != expectedUsername {
 		return fmt.Errorf("CSR common name %s doesn't match expected user %s", csrReq.Subject.CommonName, expectedUsername)
+	}
+
+	// Subject.Organization becomes the Groups claim on the issued cert; the
+	// operator never sets one, so any value here is an attempted group injection.
+	if len(csrReq.Subject.Organization) > 0 {
+		return fmt.Errorf("CSR Subject.Organization %v is not permitted (operator never sets groups)", csrReq.Subject.Organization)
+	}
+
+	// Anti-impersonation: the CSR's public key must match the operator-held
+	// private key. Without this, an attacker with `create` on CSRs can pre-plant
+	// a request under the deterministic name and receive a signed cert bound to
+	// their own key.
+	if err := helpers.VerifyCSRMatchesKey(csr.Spec.Request, expectedKeyPEM); err != nil {
+		return err
 	}
 
 	return nil
