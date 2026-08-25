@@ -7,10 +7,13 @@ import (
 	"time"
 
 	authv1alpha1 "github.com/openkube-hub/KubeUser/api/v1alpha1"
+	"github.com/openkube-hub/KubeUser/internal/controller/helpers"
 	certv1 "k8s.io/api/certificates/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -538,6 +541,199 @@ func TestRotationManager_CSRHasValidOwnerReference(t *testing.T) {
 	// must still block foreground deletion so orphaned certs cannot outlive the User.
 	if ref.BlockOwnerDeletion == nil || !*ref.BlockOwnerDeletion {
 		t.Errorf("OwnerReference.BlockOwnerDeletion = %v, want *true", ref.BlockOwnerDeletion)
+	}
+}
+
+// TestRotationManager_RotateUserCertificate_RejectsUnownedShadowSecret is the
+// regression guard for CVE-class issue #115: RotateUserCertificate previously
+// treated any Secret sitting at `<user>-rotation-temp` as prior operator state
+// and resumed the rotation from its `key.pem`. A caller with `create` on
+// Secrets in the operator namespace could plant their own private key, wait for
+// any legitimate rotation trigger, and the operator would build a CSR against
+// the planted key and write that key into `<user>-kubeconfig` on the atomic
+// flip — silently authenticating the target User with attacker-held key
+// material. This test drives the exact pre-plant scenario and asserts the
+// operator refuses to resume, deletes the impostor, and does not create a CSR.
+func TestRotationManager_RotateUserCertificate_RejectsUnownedShadowSecret(t *testing.T) {
+	t.Setenv("KUBEUSER_NAMESPACE", "kubeuser")
+
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("corev1 scheme: %v", err)
+	}
+	if err := certv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("certv1 scheme: %v", err)
+	}
+
+	// Impostor shadow secret with attacker key and no OwnerReference back to
+	// the target User. This is the exact shape reproduced on the live cluster
+	// in the issue's PoC (labels + csr-name annotation to look legitimate).
+	impostor := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "alice-rotation-temp",
+			Namespace: "kubeuser",
+			Labels: map[string]string{
+				authv1alpha1.UserLabel:     "alice",
+				authv1alpha1.RotationLabel: "true",
+				authv1alpha1.ShadowLabel:   "true",
+			},
+			Annotations: map[string]string{
+				authv1alpha1.CSRNameAnnotation: "alice-attacker-csr",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{"key.pem": []byte("attacker-controlled-key-material")},
+	}
+
+	cli := fake.NewClientBuilder().WithScheme(scheme).WithObjects(impostor).Build()
+	recorder := record.NewFakeRecorder(10)
+	rm := NewRotationManager(cli, recorder, "kubernetes.io/kube-apiserver-client", "", nil)
+
+	user := &authv1alpha1.User{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "alice",
+			Namespace: "kubeuser",
+			UID:       "12345678-1234-1234-1234-123456789012",
+		},
+	}
+
+	_, _, err := rm.RotateUserCertificate(context.Background(), user, time.Hour)
+	if err == nil {
+		t.Fatal("RotateUserCertificate accepted an unowned shadow secret — attacker key would be used for the next CSR and written into the user's kubeconfig")
+	}
+	if !strings.Contains(err.Error(), "not owned by user") {
+		t.Errorf("error = %v, want it to mention the ownership refusal", err)
+	}
+
+	// The impostor must be removed so a follow-up reconcile starts a clean
+	// rotation instead of loop-refusing forever.
+	got := &corev1.Secret{}
+	getErr := cli.Get(context.Background(), client.ObjectKey{Name: "alice-rotation-temp", Namespace: "kubeuser"}, got)
+	if !apierrors.IsNotFound(getErr) {
+		t.Errorf("impostor shadow secret still present after refusal (get err = %v); operator would keep tripping the same trust check", getErr)
+	}
+
+	// No CSR must have been created — reaching CSR creation means the attacker
+	// key already flowed into a public-key artefact ready for signer approval.
+	csrList := &certv1.CertificateSigningRequestList{}
+	if err := cli.List(context.Background(), csrList); err != nil {
+		t.Fatalf("list CSRs: %v", err)
+	}
+	if len(csrList.Items) != 0 {
+		t.Errorf("expected 0 CSRs after refusing untrusted shadow, got %d: %+v", len(csrList.Items), csrList.Items)
+	}
+
+	// Operator visibility: an event must fire so cluster admins can catch this in audits.
+	select {
+	case ev := <-recorder.Events:
+		if !strings.Contains(ev, "ShadowSecretUntrusted") {
+			t.Errorf("event %q does not name the trust-check reason", ev)
+		}
+	default:
+		t.Error("no event emitted for refusal — this attack must be observable to operators")
+	}
+}
+
+// TestRotationManager_RotateUserCertificate_AcceptsOwnedShadowSecret is the
+// symmetric guard: the trust check must not falsely reject shadow secrets the
+// operator itself created. A false positive here would break every in-progress
+// rotation, effectively DoSing the operator.
+func TestRotationManager_RotateUserCertificate_AcceptsOwnedShadowSecret(t *testing.T) {
+	t.Setenv("KUBEUSER_NAMESPACE", "kubeuser")
+
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("corev1 scheme: %v", err)
+	}
+	if err := certv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("certv1 scheme: %v", err)
+	}
+
+	cli := fake.NewClientBuilder().WithScheme(scheme).Build()
+	recorder := record.NewFakeRecorder(10)
+	rm := NewRotationManager(cli, recorder, "kubernetes.io/kube-apiserver-client", "", nil)
+
+	user := &authv1alpha1.User{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "alice",
+			Namespace: "kubeuser",
+			UID:       "12345678-1234-1234-1234-123456789012",
+		},
+	}
+
+	// Production WRITE path — creates a shadow secret owned by this User.
+	if err := rm.createShadowSecretForRotation(context.Background(), user); err != nil {
+		t.Fatalf("createShadowSecretForRotation: %v", err)
+	}
+
+	// Second call should treat the operator-created secret as trusted and
+	// progress past the trust check. It will still fail further down
+	// (e.g. approval subresource is not implemented by the fake client), but
+	// the error must NOT be the ownership refusal.
+	_, _, err := rm.RotateUserCertificate(context.Background(), user, time.Hour)
+	if err != nil && strings.Contains(err.Error(), "not owned by user") {
+		t.Fatalf("operator-created shadow secret was refused as untrusted: %v", err)
+	}
+
+	// The trusted shadow secret must survive — deleting it here would abort a
+	// legitimate in-progress rotation.
+	got := &corev1.Secret{}
+	if err := cli.Get(context.Background(), client.ObjectKey{Name: "alice-rotation-temp", Namespace: "kubeuser"}, got); err != nil {
+		t.Fatalf("legitimate shadow secret was deleted by trust check: %v", err)
+	}
+}
+
+// TestRotationManager_AtomicSecretUpdate_KeySecretCarriesOwnerReference guards
+// the second half of the fix: rotation writes the new private key back to
+// `<user>-key` via atomicSecretUpdate; if that write drops the OwnerReference
+// then ensurePrivateKey's trust check refuses the same key on the next
+// initial-issuance-style reconcile and the operator wedges. The invariant is
+// therefore "rotation-time key writes must be adoptable by the read path".
+func TestRotationManager_AtomicSecretUpdate_KeySecretCarriesOwnerReference(t *testing.T) {
+	t.Setenv("KUBEUSER_NAMESPACE", "kubeuser")
+
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("corev1 scheme: %v", err)
+	}
+
+	// Seed the CA ConfigMap so getClusterCA succeeds in the test env.
+	caCM := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "kube-root-ca.crt", Namespace: "default"},
+		Data:       map[string]string{"ca.crt": "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----"},
+	}
+
+	cli := fake.NewClientBuilder().WithScheme(scheme).WithObjects(caCM).Build()
+	rm := NewRotationManager(cli, record.NewFakeRecorder(10), "kubernetes.io/kube-apiserver-client", "", nil)
+
+	user := &authv1alpha1.User{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "alice",
+			Namespace: "kubeuser",
+			UID:       "12345678-1234-1234-1234-123456789012",
+		},
+	}
+
+	newKeyPEM := []byte("-----BEGIN RSA PRIVATE KEY-----\nAAAA\n-----END RSA PRIVATE KEY-----")
+	signedCert := []byte("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----")
+
+	if err := rm.atomicSecretUpdate(context.Background(), user, newKeyPEM, signedCert); err != nil {
+		t.Fatalf("atomicSecretUpdate: %v", err)
+	}
+
+	got := &corev1.Secret{}
+	if err := cli.Get(context.Background(), client.ObjectKey{Name: "alice-key", Namespace: "kubeuser"}, got); err != nil {
+		t.Fatalf("get key secret: %v", err)
+	}
+	if len(got.OwnerReferences) != 1 {
+		t.Fatalf("key secret OwnerReferences count = %d, want 1 — without an owner ref the read-side trust check would refuse this key on next reconcile", len(got.OwnerReferences))
+	}
+	ref := got.OwnerReferences[0]
+	if !helpers.IsOwnedByUser(got, user) {
+		t.Errorf("key secret OwnerReference = (Kind=%q, UID=%q), want the shared IsOwnedByUser check to accept it", ref.Kind, ref.UID)
+	}
+	if ref.APIVersion != authv1alpha1.GroupVersion.String() {
+		t.Errorf("key secret OwnerReference.APIVersion = %q, want %q (empty APIVersion causes GC to skip the ref)", ref.APIVersion, authv1alpha1.GroupVersion.String())
 	}
 }
 

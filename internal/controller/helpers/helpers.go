@@ -334,6 +334,22 @@ func RemoveString(slice []string, s string) []string {
 	return result
 }
 
+// IsOwnedByUser reports whether obj carries an OwnerReference whose Kind is
+// "User" and whose UID matches the given User. Used as a trust check on
+// resources with deterministic names (shadow Secret, key Secret) so a resource
+// planted by someone other than the operator is not silently resumed from.
+func IsOwnedByUser(obj metav1.Object, user *authv1alpha1.User) bool {
+	if obj == nil || user == nil {
+		return false
+	}
+	for _, ref := range obj.GetOwnerReferences() {
+		if ref.Kind == "User" && ref.UID == user.UID {
+			return true
+		}
+	}
+	return false
+}
+
 // SemanticTimePtrMatch compares two *metav1.Time pointers safely, handling nil cases.
 // Returns true if both pointers are semantically equal (both nil or both point to equal times).
 func SemanticTimePtrMatch(a, b *metav1.Time) bool {

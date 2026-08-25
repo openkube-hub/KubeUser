@@ -78,7 +78,7 @@ func EnsureCertKubeconfigWithDuration(ctx context.Context, r client.Client, user
 	}
 
 	// Stage 3: Ensure private key exists
-	keyPEM, err := ensurePrivateKey(ctx, r, keySecretName, userNamespace)
+	keyPEM, err := ensurePrivateKey(ctx, r, user, keySecretName, userNamespace)
 	if err != nil {
 		return false, false, fmt.Errorf("failed to ensure private key: %w", err)
 	}
@@ -151,16 +151,23 @@ func ensureNamespace(ctx context.Context, r client.Client, namespace string) err
 	return nil
 }
 
-// ensurePrivateKey loads an existing private key or generates a new 2048-bit RSA key and persists it
-// Returns the key PEM bytes
-func ensurePrivateKey(ctx context.Context, r client.Client, name, namespace string) ([]byte, error) {
+// ensurePrivateKey loads an existing private key or generates a new 2048-bit RSA key and persists it.
+// An existing key Secret is only reused when its OwnerReferences confirm this
+// User created it; otherwise it is refused rather than silently used or
+// overwritten, since either behaviour would allow a caller with `create` on
+// Secrets in the operator namespace to pre-plant key material that ends up
+// authenticating the target User.
+func ensurePrivateKey(ctx context.Context, r client.Client, user *authv1alpha1.User, name, namespace string) ([]byte, error) {
 	logger := logf.FromContext(ctx)
 
 	var keySecret corev1.Secret
 	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &keySecret)
 
 	if err == nil {
-		// Key already exists
+		if !helpers.IsOwnedByUser(&keySecret, user) {
+			return nil, fmt.Errorf("key secret %s/%s is not owned by user %s (uid=%s); refusing to reuse potentially planted key material",
+				namespace, name, user.Name, user.UID)
+		}
 		keyPEM := keySecret.Data["key.pem"]
 		if keyPEM == nil {
 			return nil, fmt.Errorf("key secret exists but key.pem data is missing")
@@ -189,6 +196,16 @@ func ensurePrivateKey(ctx context.Context, r client.Client, name, namespace stri
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion:         authv1alpha1.GroupVersion.String(),
+					Kind:               "User",
+					Name:               user.Name,
+					UID:                user.UID,
+					Controller:         &[]bool{true}[0],
+					BlockOwnerDeletion: &[]bool{true}[0],
+				},
+			},
 		},
 		Type: corev1.SecretTypeOpaque,
 		Data: map[string][]byte{"key.pem": keyPEM},
