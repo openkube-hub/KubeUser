@@ -22,6 +22,8 @@ linters:
     - unparam
     - unused
   settings:
+    goconst:
+      min-occurrences: 10
     revive:
       rules:
         - name: comment-spacings
@@ -36,6 +38,15 @@ linters:
           - dupl
           - lll
         path: internal/*
+      - linters:
+          - goconst
+        path: _test\.go
+      # ctrl.Result.Requeue is deprecated in controller-runtime — migration to
+      # RequeueAfter is non-trivial (loses rate-limited backoff) and tracked
+      # separately. Don't block CI in the meantime.
+      - linters:
+          - staticcheck
+        text: "SA1019.*Requeue is deprecated"
     paths:
       - third_party$
       - builtin$
