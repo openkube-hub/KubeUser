@@ -115,32 +115,32 @@ helm upgrade --install kubeuser "${REPO_ROOT}/helm/kubeuser" \
   --timeout 5m
 success "KubeUser installed."
 
-# ── 9. Apply test user ────────────────────────────────────────────────────────
-info "Applying test user from test-examples/valid-user.yaml…"
-kubectl apply -f "${REPO_ROOT}/test-examples/valid-user.yaml"
+# ── 9. Apply example user ─────────────────────────────────────────────────────
+info "Applying example user from examples/users/minimal-viewer.yaml…"
+kubectl apply -f "${REPO_ROOT}/examples/users/minimal-viewer.yaml"
 
-info "Waiting for valid-user to become Active…"
-kubectl wait --for=jsonpath='{.status.phase}'=Active user/valid-user --timeout=120s
-success "valid-user is Active."
+info "Waiting for alice-viewer to become Active…"
+kubectl wait --for=jsonpath='{.status.phase}'=Active user/alice-viewer --timeout=120s
+success "alice-viewer is Active."
 
 echo ""
 info "kubectl get users:"
 kubectl get users
 
 echo ""
-info "kubectl get user valid-user:"
-kubectl get user valid-user -o yaml
+info "kubectl get user alice-viewer:"
+kubectl get user alice-viewer -o yaml
 
 # ── 10. Extract kubeconfig ────────────────────────────────────────────────────
 info "Extracting kubeconfig to /tmp/kubeconfig…"
-kubectl get secret valid-user-kubeconfig \
+kubectl get secret alice-viewer-kubeconfig \
   --namespace kubeuser \
   -o jsonpath='{.data.config}' \
   | base64 -d > /tmp/kubeconfig
 success "Kubeconfig written to /tmp/kubeconfig."
 
 # ── 11. Smoke-test the generated kubeconfig ───────────────────────────────────
-info "Listing pods in default namespace using valid-user kubeconfig…"
+info "Listing pods in default namespace using alice-viewer kubeconfig…"
 KUBECONFIG=/tmp/kubeconfig kubectl get pods -n default
 
 # ── Done ───────────────────────────────────────────────────────────────────────
@@ -153,5 +153,5 @@ echo "  Grafana    → kubectl -n monitoring port-forward svc/kube-prometheus-st
 echo "               http://localhost:3000  (admin / admin)"
 echo ""
 echo "  KubeUser   → kubectl -n kubeuser get pods"
-echo "  Kubeconfig → /tmp/kubeconfig  (valid-user)"
+echo "  Kubeconfig → /tmp/kubeconfig  (alice-viewer)"
 echo ""

@@ -1,9 +1,8 @@
 apiVersion: auth.openkube.io/v1alpha1
 kind: User
 metadata:
-  name: valid-user
+  name: alice-viewer
 spec:
-  # Valid auth section with explicit type - should be accepted
   auth:
     type: x509
   clusterRoles:
