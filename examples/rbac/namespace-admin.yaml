@@ -1,0 +1,11 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubeuser-namespace-admin
+  labels:
+    app.kubernetes.io/name: kubeuser
+    app.kubernetes.io/component: example-rbac
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["*"]

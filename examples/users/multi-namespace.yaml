@@ -1,0 +1,15 @@
+apiVersion: auth.openkube.io/v1alpha1
+kind: User
+metadata:
+  name: dave-platform
+spec:
+  auth:
+    type: x509
+    ttl: 168h
+  roles:
+    - namespace: dev
+      existingClusterRole: kubeuser-namespace-admin
+    - namespace: staging
+      existingClusterRole: kubeuser-developer
+    - namespace: prod
+      existingClusterRole: kubeuser-viewer

@@ -352,6 +352,21 @@ kubectl get csr -o jsonpath='{range .items[*]}{.spec.signerName}{"\n"}{end}' | s
 
 ---
 
+## Examples
+
+Ready-to-apply starter manifests live under [`examples/`](examples/):
+
+- [`examples/rbac/`](examples/rbac/) — starter `ClusterRole`s (viewer,
+  developer, namespace-admin, readonly) that fill gaps left by Kubernetes'
+  built-in `view`/`edit`/`admin`/`cluster-admin`.
+- [`examples/users/`](examples/users/) — sample `User` CRs for common
+  patterns (minimal, developer, on-call, multi-namespace).
+
+```bash
+kubectl apply -f examples/rbac/
+kubectl apply -f examples/users/minimal-viewer.yaml
+```
+
 ## Documentation
 
 - [Certificate Management](docs/certificate-management.md)

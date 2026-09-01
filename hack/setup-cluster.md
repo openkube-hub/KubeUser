@@ -30,8 +30,8 @@ IMG=ghcr.io/openkube-hub/kubeuser-controller:dev ./hack/setup-cluster.sh
 | 5 | `make docker-build` + `kind load` the controller image |
 | 6 | `helm upgrade --install kubeuser` from `helm/kubeuser/` with metrics enabled |
 | 7 | Install kube-prometheus-stack (after KubeUser so the metrics TLS cert exists) |
-| 8 | Apply `test-examples/valid-user.yaml` and wait for `Active` |
-| 9 | Extract `valid-user` kubeconfig → `/tmp/kubeconfig` |
+| 8 | Apply `examples/users/minimal-viewer.yaml` and wait for `Active` |
+| 9 | Extract `alice-viewer` kubeconfig → `/tmp/kubeconfig` |
 | 10 | Smoke-test: `kubectl get pods -n default` with the generated kubeconfig |
 
 `--upgrade-only` skips steps 1–4 and 7 (cluster, repos, cert-manager, prometheus).
