@@ -2,6 +2,10 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+FIXTURES="${REPO_ROOT}/test/fixtures"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -98,11 +102,11 @@ test_user_creation() {
     
     # Apply test setup (namespaces and roles)
     log_info "Creating test setup..."
-    kubectl apply -f test/test-setup.yaml
+    kubectl apply -f ${FIXTURES}/setup.yaml
     
     # Create test user
     log_info "Creating test user 'jane'..."
-    kubectl apply -f test/test-user-jane-1.yaml
+    kubectl apply -f ${FIXTURES}/smoke-user.yaml
     
     # Wait for user to be processed
     wait_for_condition "User 'jane' to be created" "kubectl get user jane >/dev/null 2>&1" 30
@@ -208,7 +212,7 @@ test_user_update() {
     
     # Update user permissions
     log_info "Updating user permissions..."
-    kubectl apply -f test/test-user-jane-2.yaml
+    kubectl apply -f ${FIXTURES}/smoke-user-updated.yaml
     
     # Wait for changes to propagate
     sleep 5
@@ -259,7 +263,7 @@ test_cleanup() {
     
     # Delete user
     log_info "Deleting user 'jane'..."
-    kubectl delete -f test/test-user-jane-1.yaml --ignore-not-found
+    kubectl delete -f ${FIXTURES}/smoke-user.yaml --ignore-not-found
     
     # Check that resources are cleaned up
     sleep 5
@@ -286,7 +290,7 @@ test_cleanup() {
     fi
     
     # Clean up test setup
-    kubectl delete -f test/test-setup.yaml --ignore-not-found
+    kubectl delete -f ${FIXTURES}/setup.yaml --ignore-not-found
     
     log_success "Cleanup test completed"
 }
@@ -296,7 +300,7 @@ main() {
     log_info "Starting KubeUser comprehensive test suite..."
     
     # Check if running from project directory
-    if [ ! -f "test/test-setup.yaml" ]; then
+    if [ ! -f "${FIXTURES}/setup.yaml" ]; then
         log_error "Please run this script from the KubeUser project root directory"
         exit 1
     fi
