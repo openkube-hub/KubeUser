@@ -115,6 +115,11 @@ The following table lists the configurable parameters and their default values:
 | `resources.requests.memory` | Memory request | `64Mi` |
 | `webhook.enabled` | Enable webhook server | `true` |
 | `webhook.service.port` | Webhook service port | `443` |
+| `webhook.mutating.failurePolicy` | Mutating webhook failure policy. Defaults are re-applied by the controller on every reconcile, so `Ignore` avoids turning a webhook-pod restart into a cluster-wide User create/update outage. Setting this to `Fail` reintroduces issue #38. | `Ignore` |
+| `webhook.validating.failurePolicy` | Validating webhook failure policy. Enforces mandatory `spec.auth.type`, reserved-identity prefix, RBAC-reference existence, and TTL/renewBefore bounds. Setting this to `Ignore` admits Users the controller cannot safely reconcile. | `Fail` |
+| `podDisruptionBudget.enabled` | Create a PodDisruptionBudget for the controller pod that serves the webhooks. | `true` |
+| `podDisruptionBudget.minAvailable` | Minimum controller replicas that must stay available during voluntary disruption. Set to `null` if using `maxUnavailable` instead. | `1` |
+| `podDisruptionBudget.maxUnavailable` | Maximum controller replicas that may be unavailable during voluntary disruption. Mutually exclusive with `minAvailable`. | `null` |
 | `metrics.enabled` | Enable metrics endpoint | `true` |
 | `metrics.service.port` | Metrics service port | `8080` |
 | `rbac.create` | Create RBAC resources | `true` |

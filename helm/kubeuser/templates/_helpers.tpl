@@ -92,6 +92,19 @@ Create image name
 {{- end }}
 
 {{/*
+Reject the pre-#38 single webhook.failurePolicy key. The chart now sets
+mutating and validating policies independently (Ignore / Fail); a shared
+key silently pushes the mutating webhook back to Fail and reintroduces the
+outage. Called from templates/webhook-csr.yaml so users see the error
+before the chart tries to render with an unexpected default.
+*/}}
+{{- define "kubeuser.validateWebhookFailurePolicy" -}}
+{{- if hasKey .Values.webhook "failurePolicy" -}}
+{{- fail "webhook.failurePolicy was removed. Set webhook.mutating.failurePolicy (default Ignore) and webhook.validating.failurePolicy (default Fail) separately. A single shared value would revert the fix for issue #38." -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Validate that terminationGracePeriodSeconds leaves at least 5 seconds of
 headroom above manager.gracefulShutdownTimeoutSeconds. Headroom covers the
 leader-lease release PATCH and any straggling API calls on the way out.
