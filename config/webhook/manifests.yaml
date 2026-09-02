@@ -11,7 +11,7 @@ webhooks:
       name: webhook-service
       namespace: system
       path: /mutate-auth-openkube-io-v1alpha1-user
-  failurePolicy: Fail
+  failurePolicy: Ignore
   name: muser.auth.openkube.io
   rules:
   - apiGroups:

@@ -29,7 +29,7 @@ type UserWebhook struct {
 	client.Client
 }
 
-// +kubebuilder:webhook:path=/mutate-auth-openkube-io-v1alpha1-user,mutating=true,failurePolicy=fail,sideEffects=None,groups=auth.openkube.io,resources=users,verbs=create;update,versions=v1alpha1,name=muser.auth.openkube.io,admissionReviewVersions=v1
+// +kubebuilder:webhook:path=/mutate-auth-openkube-io-v1alpha1-user,mutating=true,failurePolicy=ignore,sideEffects=None,groups=auth.openkube.io,resources=users,verbs=create;update,versions=v1alpha1,name=muser.auth.openkube.io,admissionReviewVersions=v1
 // +kubebuilder:webhook:path=/validate-auth-openkube-io-v1alpha1-user,mutating=false,failurePolicy=fail,sideEffects=None,groups=auth.openkube.io,resources=users,verbs=create;update,versions=v1alpha1,name=vuser.auth.openkube.io,admissionReviewVersions=v1
 
 // SetupWithManager registers the webhook with the manager
