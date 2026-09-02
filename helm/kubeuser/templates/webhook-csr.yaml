@@ -1,3 +1,4 @@
+{{- include "kubeuser.validateWebhookFailurePolicy" . -}}
 {{- if .Values.webhook.enabled }}
 ---
 # MutatingWebhookConfiguration with cert-manager CA injection
@@ -19,7 +20,7 @@ webhooks:
       namespace: {{ .Release.Namespace }}
       path: /mutate-auth-openkube-io-v1alpha1-user
     # caBundle will be injected automatically by cert-manager
-  failurePolicy: {{ .Values.webhook.failurePolicy | default "Fail" }}
+  failurePolicy: {{ .Values.webhook.mutating.failurePolicy | default "Ignore" }}
   name: muser.auth.openkube.io
   rules:
   - apiGroups:
@@ -52,7 +53,7 @@ webhooks:
       namespace: {{ .Release.Namespace }}
       path: /validate-auth-openkube-io-v1alpha1-user
     # caBundle will be injected automatically by cert-manager
-  failurePolicy: {{ .Values.webhook.failurePolicy | default "Fail" }}
+  failurePolicy: {{ .Values.webhook.validating.failurePolicy | default "Fail" }}
   name: vuser.auth.openkube.io
   rules:
   - apiGroups:

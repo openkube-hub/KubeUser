@@ -48,6 +48,18 @@ securityContext:
 # Deployment configuration
 replicaCount: 2
 
+# PodDisruptionBudget for the controller pod that serves the webhooks.
+# minAvailable: 1 makes voluntary disruptions (node drains, cluster
+# upgrades) block on a replacement pod becoming Ready instead of taking
+# the validating webhook offline mid-drain. Set enabled: false in
+# single-replica dev clusters where you'd rather let drains proceed.
+# Set only one of minAvailable / maxUnavailable — the template picks
+# whichever is non-null.
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+  maxUnavailable: null
+
 # kubelet's SIGTERM→SIGKILL window. Must exceed manager.gracefulShutdownTimeoutSeconds
 # by at least 5s of headroom for the leader-lease release PATCH.
 # Chart validation in _helpers.tpl enforces this on every install/upgrade.
@@ -97,9 +109,24 @@ manager:
 webhook:
   enabled: true
   certPath: /tmp/k8s-webhook-server/serving-certs
-  # Fail = block requests if webhook fails (production)
-  # Ignore = allow requests if webhook fails (for testing)
-  failurePolicy: Fail
+  # Per-webhook failure policies. These are correctness invariants, not
+  # operational preferences — the defaults below are the safe ones.
+  #
+  # mutating: Ignore. The mutating webhook only writes TTL / autoRenew
+  #   defaults, and the controller re-derives the exact same values via
+  #   auth.GetSafeAuthSpec on every reconcile. Setting this to Fail turns
+  #   any webhook-pod restart, node drain, or rolling upgrade into a
+  #   cluster-wide User create/update outage (see issue #38).
+  #
+  # validating: Fail. The validating webhook is the only enforcement point
+  #   for mandatory spec.auth.type, the "system:" reserved-identity prefix,
+  #   Role/ClusterRole reference existence, and TTL/renewBefore bounds.
+  #   Setting this to Ignore admits Users that the controller cannot
+  #   safely reconcile.
+  mutating:
+    failurePolicy: Ignore
+  validating:
+    failurePolicy: Fail
   # cert-manager configuration for webhook certificates
   certManager:
     # Duration for webhook certificates
