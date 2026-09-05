@@ -21,14 +21,18 @@ import (
 	"github.com/openkube-hub/KubeUser/internal/controller/metrics"
 	"github.com/openkube-hub/KubeUser/internal/controller/rbac"
 	"github.com/openkube-hub/KubeUser/internal/controller/renewal"
+	"golang.org/x/time/rate"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 // UserReconciler reconciles a User object
@@ -269,7 +273,11 @@ func (r *UserReconciler) reconcileBusinessLogic(ctx context.Context, user *authv
 
 		user.Status.Phase = helpers.PhaseError
 		user.Status.Message = fmt.Sprintf("Failed to ensure authentication: %v", err)
-		return true, &ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		// Propagate the error so the workqueue rate limiter drives retries with
+		// per-item exponential backoff and jitter (see SetupWithManager). A fixed
+		// RequeueAfter here bypasses the rate limiter and causes a thundering herd
+		// when many users fail simultaneously (e.g., CSR API outage).
+		return true, nil, err
 	}
 
 	// Handle immediate requeue if needed (e.g., Shadow Secret created)
@@ -562,8 +570,11 @@ func (r *UserReconciler) handleError(ctx context.Context, user *authv1alpha1.Use
 
 	logger.Error(err, "Reconciliation failed", "phase", user.Status.Phase)
 
-	// Return a standard 5s requeue for errors
-	return ctrl.Result{RequeueAfter: 5 * time.Second}, err
+	// Return the error alone: controller-runtime discards RequeueAfter when the
+	// error is non-nil and requeues via the workqueue rate limiter, which applies
+	// per-item exponential backoff with jitter (see SetupWithManager). An explicit
+	// RequeueAfter here would be dead code and hide the real retry mechanism.
+	return ctrl.Result{}, err
 }
 
 // calculateRequeue determines the optimal requeue strategy based on user state and configuration.
@@ -786,5 +797,36 @@ func (r *UserReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&rbacv1.ClusterRoleBinding{}).
 		Owns(&corev1.Secret{}).
 		Named("user").
+		WithOptions(controller.Options{
+			RateLimiter: newUserRateLimiter(),
+		}).
 		Complete(r)
+}
+
+// Rate limiter tunables for the User reconcile workqueue. Failed reconciles are
+// retried via the workqueue rate limiter, which combines a per-item exponential
+// backoff (baseDelay*2^failures, capped at maxDelay) with an overall token
+// bucket that caps aggregate retry QPS across all items. This prevents a
+// thundering herd when many Users fail simultaneously (CSR API outage, control
+// plane partition) — each User's retries decorrelate through backoff, and the
+// bucket limits total requeue pressure on the API server.
+const (
+	userReconcileBackoffBase = 1 * time.Second
+	userReconcileBackoffMax  = 5 * time.Minute
+	userReconcileBucketQPS   = 10
+	userReconcileBucketBurst = 100
+)
+
+// newUserRateLimiter builds the workqueue rate limiter for the User controller.
+// Exposed as a package function so tests can assert its shape.
+func newUserRateLimiter() workqueue.TypedRateLimiter[reconcile.Request] {
+	return workqueue.NewTypedMaxOfRateLimiter[reconcile.Request](
+		workqueue.NewTypedItemExponentialFailureRateLimiter[reconcile.Request](
+			userReconcileBackoffBase,
+			userReconcileBackoffMax,
+		),
+		&workqueue.TypedBucketRateLimiter[reconcile.Request]{
+			Limiter: rate.NewLimiter(rate.Limit(userReconcileBucketQPS), userReconcileBucketBurst),
+		},
+	)
 }
