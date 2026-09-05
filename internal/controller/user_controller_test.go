@@ -80,7 +80,10 @@ var _ = Describe("User Controller", func() {
 			}
 
 			// The first pass persists the finalizer and ends (issue #58
-			// fresh-object pattern); the second pass runs the business logic.
+			// fresh-object pattern); the second pass runs the business logic,
+			// which fails fast in envtest because the kubeuser namespace does
+			// not exist. Errors propagate so the workqueue rate limiter drives
+			// exponential-backoff retries (issue #41).
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
@@ -88,7 +91,7 @@ var _ = Describe("User Controller", func() {
 			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
-			Expect(err).NotTo(HaveOccurred())
+			Expect(err).To(HaveOccurred(), "auth error propagates to the workqueue for rate-limited retry")
 
 			Expect(k8sClient.Get(ctx, typeNamespacedName, user)).To(Succeed())
 			Expect(user.Finalizers).To(ContainElement(authv1alpha1.UserFinalizer))

@@ -170,11 +170,12 @@ var _ = Describe("User finalizer handling (issue #58)", func() {
 
 		By("second pass persists the status computed by business logic")
 		// In envtest the business logic fails fast (the kubeuser namespace
-		// does not exist), so the persisted phase is Error. What this spec
-		// pins is the write choreography: pass one persisted nothing to
-		// status, pass two did.
+		// does not exist), so the persisted phase is Error and the auth
+		// error propagates to the workqueue for rate-limited retry (issue
+		// #41). What this spec pins is the write choreography: pass one
+		// persisted nothing to status, pass two did.
 		_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: key})
-		Expect(err).NotTo(HaveOccurred())
+		Expect(err).To(HaveOccurred(), "auth error propagates to the workqueue for rate-limited retry")
 		Expect(k8sClient.Get(ctx, key, &persisted)).To(Succeed())
 		Expect(persisted.Status.Phase).NotTo(BeEmpty())
 		Expect(persisted.Status.Message).NotTo(BeEmpty())
@@ -211,7 +212,7 @@ var _ = Describe("User finalizer handling (issue #58)", func() {
 
 		By("second pass starts from a fresh Get and persists status despite the mutation")
 		_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: key})
-		Expect(err).NotTo(HaveOccurred())
+		Expect(err).To(HaveOccurred(), "envtest auth failure now propagates to the workqueue (issue #41)")
 		Expect(k8sClient.Get(ctx, key, &persisted)).To(Succeed())
 		Expect(persisted.Status.Phase).NotTo(BeEmpty())
 		Expect(persisted.Labels).To(HaveKey("issue58-concurrent-writer"), "the concurrent write must survive untouched")
@@ -245,7 +246,7 @@ var _ = Describe("User finalizer handling (issue #58)", func() {
 
 		By("the requeued pass recomputes and persists the status")
 		_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: key})
-		Expect(err).NotTo(HaveOccurred())
+		Expect(err).To(HaveOccurred(), "envtest auth failure now propagates to the workqueue (issue #41)")
 		Expect(k8sClient.Get(ctx, key, &persisted)).To(Succeed())
 		Expect(persisted.Status.Phase).NotTo(BeEmpty())
 	})
