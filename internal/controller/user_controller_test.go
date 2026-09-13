@@ -29,6 +29,7 @@ import (
 
 	authv1alpha1 "github.com/openkube-hub/KubeUser/api/v1alpha1"
 	"github.com/openkube-hub/KubeUser/internal/controller/auth"
+	"github.com/openkube-hub/KubeUser/internal/controller/renewal"
 )
 
 var _ = Describe("User Controller", func() {
@@ -75,8 +76,10 @@ var _ = Describe("User Controller", func() {
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &UserReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:            k8sClient,
+				Scheme:            k8sClient.Scheme(),
+				AuthManager:       auth.NewManager(k8sClient, nil, "", "", nil),
+				RenewalCalculator: renewal.NewRenewalCalculator(),
 			}
 
 			// The first pass persists the finalizer and ends (issue #58
