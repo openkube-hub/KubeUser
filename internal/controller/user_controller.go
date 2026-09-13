@@ -64,6 +64,12 @@ type UserReconciler struct {
 // +kubebuilder:rbac:groups=certificates.k8s.io,resources=signers,verbs=approve,resourceNames=kubernetes.io/kube-apiserver-client;beta.eks.amazonaws.com/app-client
 // Admission resources
 // +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=validatingwebhookconfigurations,verbs=get;patch
+// Events for operator visibility on state transitions (RotationStarted,
+// RoleBindingRecreated, CertificateExpiring, …). Cluster-wide because
+// bindings are written into user-chosen namespaces; `patch` is required so
+// the recorder can dedupe repeated events by bumping count/lastTimestamp
+// instead of creating new objects on every reconcile.
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Result label values recorded on the kubeuser_reconciliations_total metric.
 const (
