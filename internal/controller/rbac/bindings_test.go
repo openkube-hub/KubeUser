@@ -9,6 +9,8 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -72,7 +74,7 @@ func TestReconcileRoleBindings_RejectsDuplicates(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cli := fake.NewClientBuilder().WithScheme(bindingsScheme(t)).WithObjects(seed...).Build()
-			err := ReconcileRoleBindings(context.Background(), cli, testUser(tt.roles, nil))
+			err := ReconcileRoleBindings(context.Background(), cli, nil, testUser(tt.roles, nil))
 
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("err = %v, wantErr = %v", err, tt.wantErr)
@@ -88,6 +90,96 @@ func TestReconcileRoleBindings_RejectsDuplicates(t *testing.T) {
 				if len(rbs.Items) != tt.wantCount {
 					t.Errorf("RoleBindings = %d, want %d", len(rbs.Items), tt.wantCount)
 				}
+			}
+		})
+	}
+}
+
+// TestReconcileRoleBindings_RoleRefKindFlipRecreates pins the fix for issue
+// #92: when a User flips a role entry between existingRole and
+// existingClusterRole (same name, same namespace), the pre-existing
+// RoleBinding must be deleted and recreated. RoleRef is immutable in the RBAC
+// API, so the pre-fix code path — which matched by namespace:name only and
+// fell through to Update — produced a stuck reconcile with the User parked in
+// phase=Error.
+func TestReconcileRoleBindings_RoleRefKindFlipRecreates(t *testing.T) {
+	tests := []struct {
+		name        string
+		seedRoleRef rbacv1.RoleRef
+		roles       []authv1alpha1.RoleSpec
+		wantKind    string
+		wantName    string
+	}{
+		{
+			name: "Role → ClusterRole flip",
+			seedRoleRef: rbacv1.RoleRef{
+				APIGroup: "rbac.authorization.k8s.io",
+				Kind:     "Role",
+				Name:     "shared",
+			},
+			roles:    []authv1alpha1.RoleSpec{{Namespace: "dev", ExistingClusterRole: "shared"}},
+			wantKind: "ClusterRole",
+			wantName: "shared",
+		},
+		{
+			name: "ClusterRole → Role flip",
+			seedRoleRef: rbacv1.RoleRef{
+				APIGroup: "rbac.authorization.k8s.io",
+				Kind:     "ClusterRole",
+				Name:     "shared",
+			},
+			roles:    []authv1alpha1.RoleSpec{{Namespace: "dev", ExistingRole: "shared"}},
+			wantKind: "Role",
+			wantName: "shared",
+		},
+	}
+
+	// Referenced roles must exist so the reconciler's existence check passes
+	// for the flipped Kind.
+	seed := []client.Object{
+		&rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: "shared", Namespace: "dev"}},
+		&rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: "shared"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			existing := &rbacv1.RoleBinding{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "alice-shared-rb",
+					Namespace: "dev",
+					Labels:    map[string]string{authv1alpha1.UserLabel: "alice"},
+				},
+				Subjects: []rbacv1.Subject{{Kind: "User", Name: "alice"}},
+				RoleRef:  tt.seedRoleRef,
+			}
+			cli := fake.NewClientBuilder().
+				WithScheme(bindingsScheme(t)).
+				WithObjects(append(seed, existing)...).
+				Build()
+
+			rec := record.NewFakeRecorder(4)
+			if err := ReconcileRoleBindings(context.Background(), cli, rec, testUser(tt.roles, nil)); err != nil {
+				t.Fatalf("ReconcileRoleBindings() error = %v (issue #92: RoleRef change must be recreated, not updated)", err)
+			}
+
+			var got rbacv1.RoleBinding
+			if err := cli.Get(context.Background(), types.NamespacedName{Name: "alice-shared-rb", Namespace: "dev"}, &got); err != nil {
+				t.Fatalf("expected RoleBinding to be recreated with the new RoleRef, got %v (issue #92)", err)
+			}
+			if got.RoleRef.Kind != tt.wantKind || got.RoleRef.Name != tt.wantName {
+				t.Fatalf("RoleRef = %s/%s, want %s/%s (issue #92: delete-then-create must land the new Kind)",
+					got.RoleRef.Kind, got.RoleRef.Name, tt.wantKind, tt.wantName)
+			}
+
+			// Confirm the event was emitted so operators see why the binding
+			// was recreated (acceptance criterion in issue #92).
+			select {
+			case ev := <-rec.Events:
+				if !strings.Contains(ev, "RoleBindingRecreated") {
+					t.Fatalf("expected RoleBindingRecreated event, got %q", ev)
+				}
+			default:
+				t.Fatal("expected a RoleBindingRecreated event to be emitted, none was")
 			}
 		})
 	}

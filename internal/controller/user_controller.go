@@ -65,6 +65,12 @@ type UserReconciler struct {
 // +kubebuilder:rbac:groups=certificates.k8s.io,resources=signers,verbs=approve,resourceNames=kubernetes.io/kube-apiserver-client;beta.eks.amazonaws.com/app-client
 // Admission resources
 // +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=validatingwebhookconfigurations,verbs=get;patch
+// Events for operator visibility on state transitions (RotationStarted,
+// RoleBindingRecreated, CertificateExpiring, …). Cluster-wide because
+// bindings are written into user-chosen namespaces; `patch` is required so
+// the recorder can dedupe repeated events by bumping count/lastTimestamp
+// instead of creating new objects on every reconcile.
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Result label values recorded on the kubeuser_reconciliations_total metric.
 const (
@@ -396,7 +402,7 @@ func (r *UserReconciler) reconcileRBAC(ctx context.Context, user *authv1alpha1.U
 
 	// Reconcile RoleBindings
 	logger.Info("Starting RoleBindings reconciliation", "rolesCount", len(user.Spec.Roles))
-	if err := rbac.ReconcileRoleBindings(rbacCtx, r.Client, user); err != nil {
+	if err := rbac.ReconcileRoleBindings(rbacCtx, r.Client, r.EventRecorder, user); err != nil {
 		logger.Error(err, "Failed to reconcile RoleBindings")
 		return false, fmt.Errorf("failed to reconcile RoleBindings: %w", err)
 	}
