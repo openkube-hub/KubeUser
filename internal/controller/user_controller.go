@@ -25,6 +25,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
@@ -518,11 +519,16 @@ func (r *UserReconciler) syncStatusFields(ctx context.Context, user *authv1alpha
 			return changed
 		}
 
-		// Calculate what NextRenewalAt SHOULD be based on current Spec
+		// Route through CalculateRenewalTime so the NextRenewalAt written here
+		// obeys the same safety floor as GetRequeueAfter, keeping the status
+		// field and the requeue timer in agreement.
 		certDuration := auth.GetAuthDuration(user)
-		issuedAt := certExpiry.Add(-certDuration) // Approximate issued time
-
-		expectedRenewalTime := renewal.CalculateNextRenewal(issuedAt, certExpiry, user.Spec.Auth.RenewBefore)
+		expected, calcErr := r.RenewalCalculator.CalculateRenewalTime(user, certExpiry, certDuration)
+		if calcErr != nil {
+			logger.Error(calcErr, "Failed to calculate expected renewal time")
+			return changed
+		}
+		expectedRenewalTime := metav1.Time{Time: expected}
 
 		// CRITICAL: Compare expected vs actual NextRenewalAt
 		// If they differ, the user changed RenewBefore in the spec - recalculate immediately

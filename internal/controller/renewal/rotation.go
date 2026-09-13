@@ -784,7 +784,7 @@ func (rm *RotationManager) atomicSecretUpdate(ctx context.Context, user *authv1a
 // updateUserStatusAfterRotation updates user status fields in memory with new certificate information.
 // Returns (bool, error) where bool indicates if any status fields were changed.
 // This is a pure in-memory mutator that performs no API writes.
-func (rm *RotationManager) updateUserStatusAfterRotation(user *authv1alpha1.User, signedCert []byte, _ time.Duration) (bool, error) {
+func (rm *RotationManager) updateUserStatusAfterRotation(user *authv1alpha1.User, signedCert []byte, certDuration time.Duration) (bool, error) {
 	// Defensive check: Auth must be non-nil
 	if user.Spec.Auth == nil {
 		return false, fmt.Errorf("authentication section is mandatory")
@@ -808,9 +808,14 @@ func (rm *RotationManager) updateUserStatusAfterRotation(user *authv1alpha1.User
 	// 2. Conditional Renewal Logic
 	var newNextRenewalAt *metav1.Time
 	if helpers.GetAutoRenew(user) {
-		// Calculate when the next rotation would trigger
-		renewalTime := CalculateNextRenewal(time.Now(), certExpiry, user.Spec.Auth.RenewBefore)
-		newNextRenewalAt = &renewalTime
+		// Route through CalculateRenewalTime so the NextRenewalAt written here
+		// obeys the same safety floor as GetRequeueAfter, keeping the status
+		// field and the requeue timer in agreement.
+		renewalTime, calcErr := NewRenewalCalculator().CalculateRenewalTime(user, certExpiry, certDuration)
+		if calcErr != nil {
+			return changed, fmt.Errorf("failed to calculate next renewal: %w", calcErr)
+		}
+		newNextRenewalAt = &metav1.Time{Time: renewalTime}
 	} else {
 		// Explicitly clear the field if auto-renewal is disabled
 		newNextRenewalAt = nil

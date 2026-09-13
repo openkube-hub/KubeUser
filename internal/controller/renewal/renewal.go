@@ -21,9 +21,12 @@ const (
 	// after which renewal should occur (cert-manager style: 1/3 = 33%)
 	DefaultRenewalPercentage = 0.33
 
-	// MinimumRenewalBuffer is the absolute minimum time before expiry
-	// that we must maintain for short-lived certificates (safety floor)
-	MinimumRenewalBuffer = 2 * time.Minute
+	// MinimumRenewalBuffer is the absolute minimum time before expiry that we
+	// must maintain for short-lived certificates. It is the single authoritative
+	// safety floor: the admission validator (ValidateRenewalConfig), the requeue
+	// calculator (GetRequeueAfter), and the NextRenewalAt writer all clamp to
+	// this value so status and actual renewal timing stay in sync.
+	MinimumRenewalBuffer = 15 * time.Minute
 
 	// MaxJitterPercentage is the maximum jitter to add to renewal time
 	// to prevent thundering herd (5% of renewal window)
@@ -211,42 +214,13 @@ func ValidateRenewalConfig(user *authv1alpha1.User) error {
 				renewBefore, certDuration, maxAllowed)
 		}
 
-		// PRODUCTION HARDENING: Fixed 15-minute safety floor
-		// Ensures even short-lived test certificates have guaranteed life before renewal
-		const safetyFloor = 15 * time.Minute
-		if certDuration-renewBefore < safetyFloor {
-			return fmt.Errorf("renewBefore (%v) leaves less than 15 minutes of certificate life (TTL: %v). This would cause immediate renewal loops. Minimum certificate life required: 15m",
-				renewBefore, certDuration)
+		// The requeue calculator and the NextRenewalAt writer clamp to
+		// MinimumRenewalBuffer; reject configurations that would land closer to
+		// expiry than the floor so the two paths cannot disagree at runtime.
+		if certDuration-renewBefore < MinimumRenewalBuffer {
+			return fmt.Errorf("renewBefore (%v) leaves less than %v of certificate life (TTL: %v). This would cause immediate renewal loops. Minimum certificate life required: %v",
+				renewBefore, MinimumRenewalBuffer, certDuration, MinimumRenewalBuffer)
 		}
 	}
 	return nil
-}
-
-// CalculateNextRenewal calculates the next renewal time based on certificate info
-// PRODUCTION HARDENING: Uses fixed 15-minute safety floor instead of proportional buffer
-func CalculateNextRenewal(issuedAt, expiry time.Time, renewBefore *metav1.Duration) metav1.Time {
-	certDuration := expiry.Sub(issuedAt)
-	var renewalTime time.Time
-
-	if renewBefore != nil {
-		renewalTime = expiry.Add(-renewBefore.Duration)
-	} else {
-		renewalBuffer := time.Duration(float64(certDuration) * DefaultRenewalPercentage)
-		renewalTime = expiry.Add(-renewalBuffer)
-	}
-
-	// PRODUCTION HARDENING: Fixed 15-minute safety floor
-	// Guarantees at least 15 minutes of certificate life before renewal triggers
-	// Prevents immediate renewal loops even for short-lived test certificates
-	const safetyFloor = 15 * time.Minute
-	safetyFloorTime := expiry.Add(-safetyFloor)
-	if renewalTime.After(safetyFloorTime) {
-		renewalTime = safetyFloorTime
-	}
-
-	if renewalTime.Before(time.Now()) {
-		renewalTime = time.Now()
-	}
-
-	return metav1.Time{Time: renewalTime}
 }
