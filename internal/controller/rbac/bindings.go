@@ -16,12 +16,14 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// ReconcileRoleBindings ensures the correct RoleBindings exist and removes outdated ones
-func ReconcileRoleBindings(ctx context.Context, r client.Client, user *authv1alpha1.User) error {
+// ReconcileRoleBindings ensures the correct RoleBindings exist and removes outdated ones.
+// The recorder is optional; nil suppresses event emission (used by unit tests).
+func ReconcileRoleBindings(ctx context.Context, r client.Client, recorder record.EventRecorder, user *authv1alpha1.User) error {
 	username := user.Name
 	logger := logf.FromContext(ctx)
 
@@ -123,10 +125,34 @@ func ReconcileRoleBindings(ctx context.Context, r client.Client, user *authv1alp
 		if existingRB, exists := existingRBMap[key]; exists {
 			// Update existing RoleBinding if it differs
 			if !helpers.RoleBindingMatches(existingRB, desiredRB) {
-				logger.Info("Updating RoleBinding", "name", rbName, "namespace", roleSpec.Namespace)
-				desiredRB.ResourceVersion = existingRB.ResourceVersion
-				if err := r.Update(ctx, desiredRB); err != nil {
-					return fmt.Errorf("failed to update RoleBinding %s in namespace %s: %w", rbName, roleSpec.Namespace, err)
+				// RoleRef is immutable in the RBAC API. A Kind flip
+				// (Role↔ClusterRole) or any other RoleRef change is rejected by
+				// the apiserver on Update, parking the User in phase=Error;
+				// delete the existing binding and create a fresh one instead.
+				if existingRB.RoleRef != desiredRB.RoleRef {
+					logger.Info("RoleBinding RoleRef changed, recreating",
+						"name", rbName, "namespace", roleSpec.Namespace,
+						"oldRoleRef", fmt.Sprintf("%s/%s", existingRB.RoleRef.Kind, existingRB.RoleRef.Name),
+						"newRoleRef", fmt.Sprintf("%s/%s", desiredRB.RoleRef.Kind, desiredRB.RoleRef.Name))
+					if recorder != nil {
+						recorder.Eventf(user, "Normal", "RoleBindingRecreated",
+							"Recreating RoleBinding %s/%s: RoleRef changed from %s/%s to %s/%s (RoleRef is immutable)",
+							roleSpec.Namespace, rbName,
+							existingRB.RoleRef.Kind, existingRB.RoleRef.Name,
+							desiredRB.RoleRef.Kind, desiredRB.RoleRef.Name)
+					}
+					if err := r.Delete(ctx, existingRB); err != nil && !apierrors.IsNotFound(err) {
+						return fmt.Errorf("failed to delete RoleBinding %s in namespace %s: %w", rbName, roleSpec.Namespace, err)
+					}
+					if err := r.Create(ctx, desiredRB); err != nil {
+						return fmt.Errorf("failed to create RoleBinding %s in namespace %s: %w", rbName, roleSpec.Namespace, err)
+					}
+				} else {
+					logger.Info("Updating RoleBinding", "name", rbName, "namespace", roleSpec.Namespace)
+					desiredRB.ResourceVersion = existingRB.ResourceVersion
+					if err := r.Update(ctx, desiredRB); err != nil {
+						return fmt.Errorf("failed to update RoleBinding %s in namespace %s: %w", rbName, roleSpec.Namespace, err)
+					}
 				}
 			}
 			// Remove from the map so we know it's been processed

@@ -395,7 +395,7 @@ func (r *UserReconciler) reconcileRBAC(ctx context.Context, user *authv1alpha1.U
 
 	// Reconcile RoleBindings
 	logger.Info("Starting RoleBindings reconciliation", "rolesCount", len(user.Spec.Roles))
-	if err := rbac.ReconcileRoleBindings(rbacCtx, r.Client, user); err != nil {
+	if err := rbac.ReconcileRoleBindings(rbacCtx, r.Client, r.EventRecorder, user); err != nil {
 		logger.Error(err, "Failed to reconcile RoleBindings")
 		return false, fmt.Errorf("failed to reconcile RoleBindings: %w", err)
 	}
