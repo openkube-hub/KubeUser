@@ -28,7 +28,21 @@ import (
 
 	authv1alpha1 "github.com/openkube-hub/KubeUser/api/v1alpha1"
 	"github.com/openkube-hub/KubeUser/internal/controller/auth"
+	"github.com/openkube-hub/KubeUser/internal/controller/renewal"
 )
+
+// newFinalizerTestReconciler returns a UserReconciler pre-populated with the
+// runtime dependencies (AuthManager, RenewalCalculator) that SetupWithManager
+// would otherwise wire up. Envtest specs construct the reconciler directly and
+// must not rely on lazy init inside reconcile paths (issue #64).
+func newFinalizerTestReconciler(c client.Client) *UserReconciler {
+	return &UserReconciler{
+		Client:            c,
+		Scheme:            k8sClient.Scheme(),
+		AuthManager:       auth.NewManager(k8sClient, nil, "", "", nil),
+		RenewalCalculator: renewal.NewRenewalCalculator(),
+	}
+}
 
 // raceInjectingClient wraps a client.Client and, exactly once, runs a hook
 // right after a successful Update of a User object. It reproduces the issue
@@ -156,7 +170,7 @@ var _ = Describe("User finalizer handling (issue #58)", func() {
 		Expect(k8sClient.Create(ctx, u)).To(Succeed())
 		DeferCleanup(func() { cleanupUser(key) })
 
-		r := &UserReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+		r := newFinalizerTestReconciler(k8sClient)
 
 		By("first pass persists the finalizer and returns an empty result")
 		res, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: key})
@@ -197,7 +211,7 @@ var _ = Describe("User finalizer handling (issue #58)", func() {
 			Client:          k8sClient,
 			afterUserUpdate: func() { mutateOutOfBand(key, "issue58-concurrent-writer") },
 		}
-		r := &UserReconciler{Client: racing, Scheme: k8sClient.Scheme()}
+		r := newFinalizerTestReconciler(racing)
 
 		By("first pass: finalizer write immediately followed by a concurrent mutation")
 		res, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: key})
@@ -223,7 +237,7 @@ var _ = Describe("User finalizer handling (issue #58)", func() {
 		Expect(k8sClient.Create(ctx, u)).To(Succeed())
 		DeferCleanup(func() { cleanupUser(key) })
 
-		plain := &UserReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+		plain := newFinalizerTestReconciler(k8sClient)
 
 		By("first pass with a plain client persists the finalizer")
 		_, err := plain.Reconcile(ctx, reconcile.Request{NamespacedName: key})
@@ -234,7 +248,7 @@ var _ = Describe("User finalizer handling (issue #58)", func() {
 			Client:             k8sClient,
 			beforeStatusUpdate: func() { mutateOutOfBand(key, "issue58-status-race") },
 		}
-		r := &UserReconciler{Client: racing, Scheme: k8sClient.Scheme()}
+		r := newFinalizerTestReconciler(racing)
 		res, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: key})
 		Expect(err).NotTo(HaveOccurred(), "a status conflict is expected contention, not a reconcile error")
 		Expect(res.RequeueAfter.Seconds()).To(BeNumerically("==", 5), "conflicts requeue on a real 5 second cadence")

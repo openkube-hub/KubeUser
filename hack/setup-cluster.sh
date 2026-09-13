@@ -123,6 +123,20 @@ info "Waiting for alice-viewer to become Active…"
 kubectl wait --for=jsonpath='{.status.phase}'=Active user/alice-viewer --timeout=120s
 success "alice-viewer is Active."
 
+# RBAC reconciliation flips .status.phase to Active before the auth pass has
+# finished issuing the x509 cert and writing the kubeconfig secret, so waiting
+# on phase alone races the secret. Wait explicitly on the secret creation.
+info "Waiting for alice-viewer-kubeconfig secret to be created…"
+for _ in $(seq 1 60); do
+  if kubectl -n kubeuser get secret alice-viewer-kubeconfig &>/dev/null; then
+    break
+  fi
+  sleep 2
+done
+kubectl -n kubeuser get secret alice-viewer-kubeconfig &>/dev/null \
+  || die "alice-viewer-kubeconfig secret was not created within 120s"
+success "alice-viewer-kubeconfig secret is ready."
+
 echo ""
 info "kubectl get users:"
 kubectl get users

@@ -440,11 +440,6 @@ func (r *UserReconciler) reconcileAuthentication(ctx context.Context, user *auth
 	authCtx, authCancel := context.WithTimeout(ctx, 90*time.Second)
 	defer authCancel()
 
-	// Initialize auth manager if needed
-	if r.AuthManager == nil {
-		r.AuthManager = auth.NewManager(r.Client, r.EventRecorder, r.SignerName, r.ClusterName, r.Metrics)
-	}
-
 	// Capture old values before authentication processing
 	oldExpiryTime := user.Status.ExpiryTime
 	oldNextRenewalAt := user.Status.NextRenewalAt
@@ -641,11 +636,6 @@ func (r *UserReconciler) calculateSmartRequeue(ctx context.Context, user *authv1
 		return 30 * time.Minute, nil
 	}
 
-	// Initialize renewal calculator if not already done
-	if r.RenewalCalculator == nil {
-		r.RenewalCalculator = renewal.NewRenewalCalculator()
-	}
-
 	// Get certificate duration
 	certDuration := auth.GetAuthDuration(user)
 
@@ -789,6 +779,16 @@ func (r *UserReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Initialize renewal calculator
 	if r.RenewalCalculator == nil {
 		r.RenewalCalculator = renewal.NewRenewalCalculator()
+	}
+
+	// Reconcile paths assume these are non-nil and do not lazily initialize them,
+	// so a concurrent reconcile cannot race on assignment. Fail fast if a future
+	// refactor lets construction slip through unset.
+	if r.AuthManager == nil {
+		return errors.New("UserReconciler.AuthManager must be initialized before registering the controller")
+	}
+	if r.RenewalCalculator == nil {
+		return errors.New("UserReconciler.RenewalCalculator must be initialized before registering the controller")
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
