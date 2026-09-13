@@ -134,6 +134,47 @@ func TestRotationManager_RequeueDelay(t *testing.T) {
 	}
 }
 
+// Regression for issue #60: CalculateRenewalTime and the (now-removed)
+// package-level CalculateNextRenewal used to clamp to two different safety
+// floors — 2 minutes and 15 minutes respectively. Status.NextRenewalAt
+// (written via the 15-min floor) disagreed with the requeue timer (fired via
+// the 2-min floor) for short-lived certificates. These tests pin the single
+// authoritative floor at 15 minutes and prove the clamp fires when the 33%
+// rule would otherwise place renewal closer to expiry than the floor.
+
+func TestMinimumRenewalBufferIsFifteenMinutes(t *testing.T) {
+	if MinimumRenewalBuffer != 15*time.Minute {
+		t.Fatalf("MinimumRenewalBuffer = %v, want 15m to match ValidateRenewalConfig's safety floor (issue #60)", MinimumRenewalBuffer)
+	}
+}
+
+func TestCalculateRenewalTime_ClampsToFifteenMinuteFloor(t *testing.T) {
+	rc := NewRenewalCalculator()
+	now := time.Now()
+	certExpiry := now.Add(30 * time.Minute)
+	certDuration := 30 * time.Minute
+
+	user := &authv1alpha1.User{
+		Spec: authv1alpha1.UserSpec{
+			Auth: &authv1alpha1.AuthSpec{AutoRenew: boolPtr(true)},
+		},
+	}
+
+	renewalTime, err := rc.CalculateRenewalTime(user, certExpiry, certDuration)
+	if err != nil {
+		t.Fatalf("CalculateRenewalTime() error = %v", err)
+	}
+
+	// The 33% rule wants renewal at expiry-10m, but the safety floor must clamp
+	// to expiry-15m so it matches ValidateRenewalConfig and the NextRenewalAt
+	// writer. Allow small slack for time.Now precision inside the calculator.
+	remaining := certExpiry.Sub(renewalTime)
+	const wantLo, wantHi = 14*time.Minute + 50*time.Second, 15*time.Minute + 10*time.Second
+	if remaining < wantLo || remaining > wantHi {
+		t.Fatalf("safety floor must clamp renewal to ~15m before expiry, got %v (issue #60)", remaining)
+	}
+}
+
 func TestValidateRenewalConfig_Basic(t *testing.T) {
 	tests := []struct {
 		name    string
