@@ -68,7 +68,7 @@ type UserSpec struct {
 	Auth *AuthSpec `json:"auth"`
 
 	// Roles is a list of namespace-scoped Role bindings. Uniqueness per
-	// (namespace, role) is enforced by the webhook and controller via
+	// (namespace, kind, role) is enforced by the webhook and controller via
 	// RoleSpec.BindingKey — a composite key can't be a CRD listMapKey, so it
 	// lives in code. MaxItems is a deliberate object-size/DoS bound.
 	// +optional

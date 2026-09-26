@@ -77,16 +77,18 @@ func ReconcileRoleBindings(ctx context.Context, r client.Client, recorder record
 		desiredRBs[key] = role
 	}
 
-	// Create a map of existing RoleBindings for easy lookup
+	// Index existing RoleBindings by object name, not by RoleRef: the generated
+	// name is the identity (it encodes namespace, RoleRef kind, and ref name),
+	// so a binding written under a different scheme falls through to the
+	// outdated-deletion pass below and is replaced rather than silently kept.
 	existingRBMap := make(map[string]*rbacv1.RoleBinding)
 	for i := range existingRBs.Items {
 		rb := &existingRBs.Items[i]
-		key := fmt.Sprintf("%s:%s", rb.Namespace, rb.RoleRef.Name)
-		existingRBMap[key] = rb
+		existingRBMap[fmt.Sprintf("%s/%s", rb.Namespace, rb.Name)] = rb
 	}
 
 	// Create or update desired RoleBindings
-	for key, roleSpec := range desiredRBs {
+	for _, roleSpec := range desiredRBs {
 		// Determine role name and kind
 		var roleName, roleKind string
 		if roleSpec.ExistingRole != "" {
@@ -97,7 +99,7 @@ func ReconcileRoleBindings(ctx context.Context, r client.Client, recorder record
 			roleKind = "ClusterRole"
 		}
 
-		rbName := fmt.Sprintf("%s-%s-rb", username, roleName)
+		rbName := roleBindingName(username, roleSpec.Namespace, roleKind, roleName)
 		desiredRB := &rbacv1.RoleBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      rbName,
@@ -122,7 +124,8 @@ func ReconcileRoleBindings(ctx context.Context, r client.Client, recorder record
 			},
 		}
 
-		if existingRB, exists := existingRBMap[key]; exists {
+		rbKey := fmt.Sprintf("%s/%s", roleSpec.Namespace, rbName)
+		if existingRB, exists := existingRBMap[rbKey]; exists {
 			// Update existing RoleBinding if it differs
 			if !helpers.RoleBindingMatches(existingRB, desiredRB) {
 				// RoleRef is immutable in the RBAC API. A Kind flip
@@ -156,7 +159,7 @@ func ReconcileRoleBindings(ctx context.Context, r client.Client, recorder record
 				}
 			}
 			// Remove from the map so we know it's been processed
-			delete(existingRBMap, key)
+			delete(existingRBMap, rbKey)
 		} else {
 			// Create new RoleBinding
 			logger.Info("Creating RoleBinding", "name", rbName, "namespace", roleSpec.Namespace)
@@ -208,16 +211,17 @@ func ReconcileClusterRoleBindings(ctx context.Context, r client.Client, user *au
 		desiredCRBs[clusterRole.ExistingClusterRole] = clusterRole
 	}
 
-	// Create a map of existing ClusterRoleBindings for easy lookup
+	// Index existing ClusterRoleBindings by object name (see the RoleBinding
+	// pass above for why the generated name is the identity).
 	existingCRBMap := make(map[string]*rbacv1.ClusterRoleBinding)
 	for i := range existingCRBs.Items {
 		crb := &existingCRBs.Items[i]
-		existingCRBMap[crb.RoleRef.Name] = crb
+		existingCRBMap[crb.Name] = crb
 	}
 
 	// Create or update desired ClusterRoleBindings
-	for clusterRoleName, clusterRoleSpec := range desiredCRBs {
-		crbName := fmt.Sprintf("%s-%s-crb", username, clusterRoleName)
+	for _, clusterRoleSpec := range desiredCRBs {
+		crbName := clusterRoleBindingName(username, clusterRoleSpec.ExistingClusterRole)
 		desiredCRB := &rbacv1.ClusterRoleBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   crbName,
@@ -241,7 +245,7 @@ func ReconcileClusterRoleBindings(ctx context.Context, r client.Client, user *au
 			},
 		}
 
-		if existingCRB, exists := existingCRBMap[clusterRoleName]; exists {
+		if existingCRB, exists := existingCRBMap[crbName]; exists {
 			// Update existing ClusterRoleBinding if it differs
 			if !helpers.ClusterRoleBindingMatches(existingCRB, desiredCRB) {
 				logger.Info("Updating ClusterRoleBinding", "name", crbName)
@@ -251,7 +255,7 @@ func ReconcileClusterRoleBindings(ctx context.Context, r client.Client, user *au
 				}
 			}
 			// Remove from the map so we know it's been processed
-			delete(existingCRBMap, clusterRoleName)
+			delete(existingCRBMap, crbName)
 		} else {
 			// Create new ClusterRoleBinding
 			logger.Info("Creating ClusterRoleBinding", "name", crbName)
