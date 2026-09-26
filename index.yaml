@@ -7,6 +7,33 @@ entries:
         url: https://openkube-hub.github.io/KubeUser/release-key.asc
       category: Infrastructure
     apiVersion: v2
+    appVersion: 0.1.2
+    created: "2026-09-26T13:25:24.313249321Z"
+    description: A Helm chart for KubeUser - Kubernetes-native user management operator
+    digest: ed4f708d08070a5239b9bb08c672d7472ac7e919461ec34b208f3a633aa382f8
+    home: https://github.com/openkube-hub/KubeUser
+    keywords:
+    - kubernetes
+    - operator
+    - user-management
+    - rbac
+    - authentication
+    maintainers:
+    - name: KubeUser Team
+      url: https://github.com/openkube-hub/KubeUser
+    name: kubeuser
+    sources:
+    - https://github.com/openkube-hub/KubeUser
+    type: application
+    urls:
+    - https://github.com/openkube-hub/KubeUser/releases/download/kubeuser-0.1.2/kubeuser-0.1.2.tgz
+    version: 0.1.2
+  - annotations:
+      artifacthub.io/signKey: |
+        fingerprint: 280EF6E0A697EF70F327B63B28346DDB12B92C97
+        url: https://openkube-hub.github.io/KubeUser/release-key.asc
+      category: Infrastructure
+    apiVersion: v2
     appVersion: 0.1.1
     created: "2026-09-13T20:16:01.028866684Z"
     description: A Helm chart for KubeUser - Kubernetes-native user management operator
@@ -233,4 +260,4 @@ entries:
     urls:
     - https://openkube-hub.github.io/KubeUser/kubeuser-0.0.5.tgz
     version: 0.0.5
-generated: "2026-09-13T20:16:01.028894041Z"
+generated: "2026-09-26T13:25:24.313295849Z"
