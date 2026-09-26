@@ -6,6 +6,28 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Changed
+- **Generated RoleBinding/ClusterRoleBinding names.** The scheme moved from
+  `<user>-<role>-rb` / `<user>-<role>-crb` to
+  `<user>-<sanitized-role>-<digest>-rb` / `-crb`, where the digest covers
+  (user, RoleRef kind, namespace, reference name). The old format omitted the
+  RoleRef kind, so a `Role` and a `ClusterRole` of the same name in the same
+  namespace collided on a single object name (see below). Secondarily, the old
+  format interpolated the reference verbatim: the apiserver accepts that —
+  binding names are validated with the laxer RBAC path-segment rules, so
+  `alice-system:basic-user-rb` is legal — but the result was neither a valid
+  DNS subdomain nor length-bounded. Generated names are now valid DNS
+  subdomains for every valid reference and stay within the 253-char budget.
+  **Migration is automatic:** on first reconcile after upgrade the controller
+  creates the new-scheme binding and reaps the legacy one in the same pass, so
+  the grant is never absent in between. Operators or tooling that hardcode
+  generated binding names must switch to the `auth.openkube.io/user` label
+  selector, which is unchanged. See #93.
+- **`spec.roles` uniqueness now includes the RoleRef kind.** A namespaced
+  `Role` and a `ClusterRole` of the same name in the same namespace are
+  distinct grants and are admitted as two bindings. This relaxes the blanket
+  rejection added in #91, which was a stopgap for the fact that both collapsed
+  onto one generated object name. Genuine duplicates are still rejected at
+  admission and by the controller backstop. See #93.
 - **Pod termination behavior.** `terminationGracePeriodSeconds` increased from
   `10` to `45` to accommodate the new `GracefulShutdownTimeout: 30s` drain
   window. SREs running this operator with strict PodDisruptionBudgets or

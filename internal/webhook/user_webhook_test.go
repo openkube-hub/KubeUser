@@ -100,13 +100,15 @@ func TestValidateRoles(t *testing.T) {
 			wantErrMatch: "duplicate role binding",
 		},
 		{
-			name: "Role and ClusterRole with same namespace:name rejected (case B)",
+			// Issue #93: the RoleRef kind is part of the binding identity and
+			// of the generated object name, so these two grants are distinct
+			// and both are representable. PR #91's blanket rejection is gone.
+			name: "Role and ClusterRole with same namespace:name admitted (case B)",
 			roles: []authv1alpha1.RoleSpec{
 				{Namespace: "dev", ExistingRole: "shared"},
 				{Namespace: "dev", ExistingClusterRole: "shared"},
 			},
-			wantErr:      true,
-			wantErrMatch: "duplicate role binding",
+			wantErr: false,
 		},
 		{
 			name: "duplicate detected regardless of order",
@@ -167,28 +169,37 @@ func TestValidateRoles(t *testing.T) {
 }
 
 // TestValidateRoles_BindingKeyContract pins the webhook ↔ controller agreement
-// on duplicate identity. Both layers reject duplicates using the same
-// RoleSpec.BindingKey (namespace + effective role name), so if this contract
-// ever drifts — e.g. someone reintroduces separate dedup keys per Kind — a
-// case-B pair that the webhook admits would still be rejected by the
-// controller, parking the User in phase=Error. This test breaks CI before
-// that regression can ship.
+// on duplicate identity. Both layers dedup on the same RoleSpec.BindingKey
+// (namespace + RoleRef kind + effective role name) and the controller derives
+// the generated object name from that same identity, so drift here means the
+// webhook admits a spec the controller then rejects — parking the User in
+// phase=Error. This test breaks CI before that regression can ship.
 func TestValidateRoles_BindingKeyContract(t *testing.T) {
-	roleA := authv1alpha1.RoleSpec{Namespace: "dev", ExistingRole: "shared"}
-	roleB := authv1alpha1.RoleSpec{Namespace: "dev", ExistingClusterRole: "shared"}
+	role := authv1alpha1.RoleSpec{Namespace: "dev", ExistingRole: "shared"}
+	clusterRole := authv1alpha1.RoleSpec{Namespace: "dev", ExistingClusterRole: "shared"}
 
-	if roleA.BindingKey() != roleB.BindingKey() {
-		t.Fatalf("BindingKey contract broken: %q vs %q — webhook and controller must dedup on the same identity",
-			roleA.BindingKey(), roleB.BindingKey())
+	// Issue #93: the kind is part of the identity, so a case-B pair is two
+	// grants, not a duplicate.
+	if role.BindingKey() == clusterRole.BindingKey() {
+		t.Fatalf("BindingKey collapses Role and ClusterRole onto %q — case B becomes unrepresentable again (issue #93)",
+			role.BindingKey())
+	}
+	if role.BindingKey() != (authv1alpha1.RoleSpec{Namespace: "dev", ExistingRole: "shared"}).BindingKey() {
+		t.Fatal("BindingKey is not stable for identical entries — duplicate detection would stop working")
 	}
 
 	w := newWebhook(t,
 		&rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: "shared", Namespace: "dev"}},
 		&rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: "shared"}},
 	)
-	err := w.validateRoles(context.Background(), []authv1alpha1.RoleSpec{roleA, roleB})
+	if err := w.validateRoles(context.Background(), []authv1alpha1.RoleSpec{role, clusterRole}); err != nil {
+		t.Fatalf("case-B pair rejected by the webhook: %v — the controller admits it, so admission must too (issue #93)", err)
+	}
+
+	// The shared identity still has to catch a genuine duplicate.
+	err := w.validateRoles(context.Background(), []authv1alpha1.RoleSpec{role, role})
 	if err == nil {
-		t.Fatalf("expected duplicate rejection for shared BindingKey %q, got nil", roleA.BindingKey())
+		t.Fatalf("expected duplicate rejection for repeated BindingKey %q, got nil", role.BindingKey())
 	}
 	if !strings.Contains(err.Error(), "duplicate role binding") {
 		t.Fatalf("expected duplicate-binding error, got %v", err)
