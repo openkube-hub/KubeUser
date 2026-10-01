@@ -32,8 +32,9 @@ indefinitely — see [Symptoms](#symptoms-of-an-incompatible-signer).
 | RKE2 | ✅ **Verified** | Verified end to end with the default signer |
 | k3s, k0s, Talos, MicroK8s | ✅ **Expected to work** | Follow the kubeadm layout: one cluster CA used for both signing and client auth; not covered by CI |
 | Hand-rolled control planes | ⚠️ **Depends on your flags** | See [below](#hand-rolled-control-planes) |
+| RKE1 | ⚠️ **Needs configuration** | Signing flags are not set by default; see [below](#hand-rolled-control-planes) |
 | **Amazon EKS** | ❌ **Not supported** | The EKS signer refuses `client auth`; see [below](#amazon-eks) |
-| GKE, AKS, other managed control planes | ⚠️ **Unverified** | Run the [preflight check](#preflight-check) before deploying |
+| GKE, AKS, other managed control planes | ⚠️ **Unverified** | No documented restriction, unlike EKS; run the [preflight check](#preflight-check) — see [Other managed providers](#other-managed-providers) |
 
 "Expected to work" means the distribution uses the upstream signing path and
 KubeUser has no platform-specific code for it — not that a maintainer has run
@@ -74,6 +75,19 @@ ps aux | grep kube-apiserver | tr ' ' '\n' | grep client-ca-file
 ```
 
 Then run the [preflight check](#preflight-check), which proves it end to end.
+
+Distributions can land here too. RKE1, for example, does not set the signing
+flags by default; CSRs are approved and never issued until the cluster
+configuration enables them:
+
+```yaml
+kube-controller:
+  extra_args:
+    cluster-signing-cert-file: /etc/kubernetes/ssl/kube-ca.pem
+    cluster-signing-key-file: /etc/kubernetes/ssl/kube-ca-key.pem
+```
+
+(RKE2 is unaffected — it is verified above.)
 
 ---
 
@@ -155,6 +169,22 @@ never issued. This is tracked upstream as
 [aws/containers-roadmap#1856](https://github.com/aws/containers-roadmap/issues/1856)
 (open since October 2022).
 
+### EKS is an outlier, not the rule for managed Kubernetes
+
+EKS fails because AWS replaced the upstream `csrsigning` behavior with its own
+signer that caps usages at `server auth`. That is an EKS-specific decision, not
+a property of running a managed control plane, so do not assume GKE, AKS or any
+other provider behaves the same way — none of them documents an equivalent
+restriction.
+
+One trap is worth naming, because it is how EKS misleads: **a provider whose
+nodes bootstrap through the CSR API tells you nothing about the user-facing
+signer.** Kubelet certificates use a different signer
+(`kubernetes.io/kube-apiserver-client-kubelet`), and a provider can keep that
+one working for node bootstrap while leaving `kubernetes.io/kube-apiserver-client`
+unserved. Seeing node CSRs reach `Approved,Issued` is not evidence that
+KubeUser will work. Only the [preflight check](#preflight-check) is.
+
 ### Symptoms of an incompatible signer
 
 What you see on EKS, and on any cluster that fails the preflight check:
@@ -204,6 +234,34 @@ The same reasoning applies to any managed control plane that does not sign
 client-auth CSRs: use the platform's own identity integration.
 
 ---
+
+---
+
+## Other Managed Providers
+
+GKE and AKS are marked **Unverified** rather than supported or unsupported,
+deliberately:
+
+- **GKE** — the cluster root CA both signs CSRs submitted through
+  `certificates.k8s.io` and is what the API server uses to validate client
+  certificates, which is the combination KubeUser needs
+  ([Cluster trust](https://docs.cloud.google.com/kubernetes-engine/docs/concepts/cluster-trust)).
+  Google documents no restriction on client-auth signing, and
+  `--no-issue-client-certificate` disables only *legacy* GKE client-certificate
+  issuance, not the certificates API. Nothing documented blocks KubeUser, but
+  Google does not document the user-facing signer's behavior either.
+- **AKS** — no documented restriction on client-auth CSRs. Note separately
+  that on clusters with `--disable-local-accounts` and Microsoft Entra
+  integration, certificate-based identities run counter to the cluster's
+  intended auth posture, and rotating cluster certificates to revoke local
+  accounts will invalidate KubeUser-issued certificates too.
+- **DOKS, LKE, Civo, OKE, ACK, Scaleway, OVH and similar** — no authoritative
+  statement either way. Most run a control plane close to upstream.
+
+In every one of these cases the preflight check answers the question in under a
+minute, and the answer is authoritative for *your* cluster and version. Claiming
+support without running it is how the EKS claim got into this project's README
+in the first place.
 
 ## Custom Signers
 

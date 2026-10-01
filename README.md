@@ -332,7 +332,12 @@ cluster signer that issues `client auth` certificates from a CA the API server t
 | k3s, k0s, Talos, MicroK8s | ✅ Expected to work |
 | Hand-rolled control planes | ⚠️ Depends on your `kube-controller-manager` and `--client-ca-file` flags |
 | **Amazon EKS** | ❌ Not supported — the EKS signer does not support client certificate signing |
-| GKE, AKS, other managed control planes | ⚠️ Unverified — run the preflight check |
+| GKE, AKS, other managed control planes | ⚠️ Unverified — no documented restriction, unlike EKS; run the preflight check |
+
+EKS is an outlier: AWS replaced the upstream signing behavior with its own signer
+capped at `server auth`. No other provider documents an equivalent restriction, and a
+provider whose *nodes* bootstrap via the CSR API proves nothing about the user-facing
+signer — kubelets use a different one.
 
 On an incompatible cluster the CSR reaches `Approved` and is never issued, so the
 `User` stays in `Pending` and no `<username>-kubeconfig` secret is ever created.
