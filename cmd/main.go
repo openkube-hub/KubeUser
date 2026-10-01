@@ -112,10 +112,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Read configurable CSR signer name from environment for managed K8s support
-	// Default: kubernetes.io/kube-apiserver-client (standard K8s)
-	// EKS: beta.eks.amazonaws.com/app-client
-	// GKE/AKS: May use custom signers
+	// Read the CSR signer name from the environment.
+	// Default: kubernetes.io/kube-apiserver-client, signed by the csrsigning
+	// controller in kube-controller-manager. Override only for a cluster that
+	// runs a custom signer issuing client-auth certs from a CA in the API
+	// server's --client-ca-file; see docs/cluster-compatibility.md.
 	signerName := os.Getenv("KUBEUSER_SIGNER_NAME")
 	if signerName == "" {
 		signerName = "kubernetes.io/kube-apiserver-client" // Default for standard K8s
@@ -226,7 +227,7 @@ func main() {
 	if err := (&controller.UserReconciler{
 		Client:      mgr.GetClient(),
 		Scheme:      mgr.GetScheme(),
-		SignerName:  signerName, // Pass configurable signer for managed K8s support
+		SignerName:  signerName, // Configurable CSR signer (see docs/cluster-compatibility.md)
 		ClusterName: clusterName,
 		Metrics:     metricsRecorder,
 	}).SetupWithManager(mgr); err != nil {

@@ -19,7 +19,12 @@ Managing Kubernetes access often means manually creating kubeconfigs, handling c
 
 KubeUser solves this by managing Kubernetes users through declarative custom resources. It automatically generates and rotates certificates, applies RBAC bindings, and produces ready-to-use kubeconfigs using native Kubernetes APIs.
 
-**Designed for** small teams and self-managed clusters that want Kubernetes-native, GitOps-friendly access control without a full IAM or OIDC stack. Not a replacement for enterprise identity providers.
+**Designed for** self-managed clusters — bare metal, kubeadm, k3s/RKE2/Talos, edge sites, and air-gapped or disconnected environments — that want Kubernetes-native, GitOps-friendly access control without running an IAM or OIDC stack.
+
+> **Before you install:** KubeUser needs a cluster signer that issues `client auth`
+> certificates — true for upstream and self-managed distributions, **not for Amazon
+> EKS**. Run the [preflight check](docs/cluster-compatibility.md#preflight-check) on
+> managed clusters first.
 
 ### Architecture
 
@@ -54,7 +59,7 @@ KubeUser solves this by managing Kubernetes users through declarative custom res
 
 ## Quickstart
 
-Try KubeUser in a few commands on any cluster with a working `kubectl` context:
+Try KubeUser in a few commands on a cluster that passes the [preflight check](docs/cluster-compatibility.md#preflight-check) (upstream, kubeadm, k3s, kind, …):
 
 ```bash
 # 1. Install cert-manager (required for webhook TLS)
@@ -103,7 +108,7 @@ For production installs, see [Installation](#installation) below.
 - [x] **Atomic Secret Updates** — zero-downtime credential flip with rollback on failure
 - [x] **Dynamic RBAC Reconciliation** — automatic RoleBinding and ClusterRoleBinding management
 - [x] **Mutating & Validating Webhooks** — TLS-secured via cert-manager CA injection
-- [x] **Managed K8s Support** — configurable CSR signers for EKS, GKE, and vanilla clusters
+- [x] **Configurable CSR Signer** — point KubeUser at a custom signer whose CA the API server trusts for client auth
 - [x] **Anti-Thundering-Herd Design** — smart requeue with jitter, 24h TTL floor, 33% renew window, and an idempotent single-status-update reconcile path
 - [x] **High Availability** — leader election and multi-replica deployment shipped via Helm
 - [x] **Prometheus Metrics & Alerting** — rotation counters, duration histograms, expiry gauges, pre-built Grafana dashboard, and shipped PrometheusRule alerts
@@ -117,6 +122,8 @@ For production installs, see [Installation](#installation) below.
 - [ ] **kubectl Plugin** — `kubectl kubeuser kubeconfig <name>` to replace the manual `kubectl get secret | base64 -d` flow
 - [ ] **Audit Log** — immutable record of every certificate issuance and rotation event
 - [ ] **Short-Lived Certificates (< 24h)** — sub-24h TTL for ephemeral, zero-trust access
+- [ ] **ServiceAccount Token Auth** — `spec.auth.type: serviceAccountToken` for clusters that cannot sign client-auth CSRs at all (EKS), since token auth needs no signer and no API server flags
+- [ ] **Pluggable Certificate Issuers** — issue via cert-manager, Vault, or AWS Private CA instead of the cluster CSR API, for clusters whose own CA is already in the API server's `--client-ca-file`
 - [ ] **ECDSA Key Support** — configurable key algorithm via `spec.auth.keyAlgorithm`
 - [ ] **OpenTelemetry Tracing** — end-to-end traces across reconcile and rotation paths
 - [ ] **Example Role Manifests** — a curated folder of well-defined, ready-to-apply `Role`/`ClusterRole` YAMLs for common access patterns (read-only, developer, namespace-admin) that users can reference directly
@@ -312,23 +319,21 @@ kubectl --kubeconfig /tmp/kubeconfig get pods -n dev
 
 ---
 
-## Managed Kubernetes Support
+## Cluster Compatibility
 
-KubeUser issues client certificates via the Kubernetes CSR API. The default signer is `kubernetes.io/kube-apiserver-client`, which works on any cluster that permits third-party client-auth CSR signing.
+KubeUser issues client certificates via the Kubernetes CSR API, so the cluster needs a
+signer that issues `client auth` certificates from a CA the API server trusts
+(`kubernetes.io/kube-apiserver-client` by default).
 
-For environments with a custom CA controller (e.g., cert-manager's CA issuer fronting a custom signer), override via Helm:
+- ✅ Verified on kubeadm, kind, minikube, Kubespray and RKE2; expected to work on any
+  distribution that follows the kubeadm CA layout.
+- ❌ **Not supported on Amazon EKS** — AWS does not sign client-auth CSRs, and no
+  configuration works around it.
+- ⚠️ GKE, AKS and other managed providers are unverified; EKS is an outlier, not the
+  rule. Run the [preflight check](docs/cluster-compatibility.md#preflight-check) first.
 
-```bash
-helm install kubeuser kubeuser/kubeuser \
-  --set signerName="<your-signer-name>" \
-  --set rbac.signerResourceNames[0]="<your-signer-name>"
-```
-
-To see what signers your cluster already accepts:
-
-```bash
-kubectl get csr -o jsonpath='{range .items[*]}{.spec.signerName}{"\n"}{end}' | sort -u
-```
+Full matrix, the preflight script, EKS alternatives and custom-signer setup:
+**[Cluster Compatibility](docs/cluster-compatibility.md)**.
 
 ---
 
@@ -371,6 +376,7 @@ kubectl apply -f examples/users/minimal-viewer.yaml
 
 ## Documentation
 
+- [Cluster Compatibility](docs/cluster-compatibility.md)
 - [Certificate Management](docs/certificate-management.md)
 - [Auto-Renewal](docs/auto-renewal.md)
 - [Webhook Validation](docs/webhook-validation.md)

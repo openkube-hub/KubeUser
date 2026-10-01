@@ -22,7 +22,7 @@ type X509Provider struct {
 	client            client.Client
 	renewalCalculator *renewal.RenewalCalculator
 	rotationManager   *renewal.RotationManager
-	signerName        string // Configurable signer for managed K8s support
+	signerName        string // CSR signer name; see docs/cluster-compatibility.md
 	clusterName       string // Configurable kubeconfig cluster name
 	metrics           *metrics.Recorder
 }

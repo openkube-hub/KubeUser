@@ -50,7 +50,7 @@ const (
 type RotationManager struct {
 	client        client.Client
 	eventRecorder record.EventRecorder
-	signerName    string // Configurable signer for managed K8s support (EKS, GKE, AKS)
+	signerName    string // CSR signer name; override only for clusters running a custom client-auth signer
 	clusterName   string // Configurable kubeconfig cluster name
 	metrics       *metrics.Recorder
 	// concurrentRotations tracks in-flight rotations owned by this manager
@@ -499,7 +499,7 @@ func (rm *RotationManager) ensureCSRExists(ctx context.Context, user *authv1alph
 		Spec: certv1.CertificateSigningRequestSpec{
 			Request:           csrPEM,
 			Usages:            []certv1.KeyUsage{certv1.UsageClientAuth},
-			SignerName:        rm.signerName, // Use configurable signer for managed K8s support
+			SignerName:        rm.signerName, // Configurable CSR signer (see docs/cluster-compatibility.md)
 			ExpirationSeconds: &expirationSeconds,
 		},
 	}
@@ -936,7 +936,7 @@ func (rm *RotationManager) extractCertificateExpiry(certData []byte) (time.Time,
 // pre-planted by an attacker under the deterministic name would otherwise be
 // self-attesting and pass the CN/label checks trivially (see #114).
 func (rm *RotationManager) validateCSRForApproval(csr *certv1.CertificateSigningRequest, expectedUsername string, expectedKeyPEM []byte) error {
-	// Validate signer name matches configured signer (supports managed K8s)
+	// Validate signer name matches the configured signer
 	if csr.Spec.SignerName != rm.signerName {
 		return fmt.Errorf("invalid signer name: %s (expected: %s)", csr.Spec.SignerName, rm.signerName)
 	}

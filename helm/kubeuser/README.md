@@ -63,6 +63,13 @@ authDefaults:
 - `authDefaults.ttl` → `KUBEUSER_DEFAULT_TTL`
 - `authDefaults.autoRenew` → `KUBEUSER_DEFAULT_AUTORENEW`
 - `signerName` → `KUBEUSER_SIGNER_NAME`
+
+**Cluster requirement:** the configured signer must issue `client auth`
+certificates from a CA in the API server's `--client-ca-file`. Upstream and
+self-managed clusters satisfy this with the default signer; Amazon EKS does not
+sign client-auth CSRs at all. When overriding `signerName`, also set
+`rbac.signerResourceNames` so the controller may approve that signer. See
+[Cluster Compatibility](../../docs/cluster-compatibility.md).
 - `clusterName` → `KUBEUSER_CLUSTER_NAME`
 
 **⚠️  Important:** Changes to `authDefaults` only apply to NEW users created after the Helm upgrade. Existing users retain their original defaults (persisted in spec).
