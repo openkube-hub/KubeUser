@@ -200,11 +200,14 @@ env:
   KUBERNETES_API_SERVER: "https://127.0.0.1:6443"
   CLUSTER_DOMAIN: "cluster.local"
 
-# CSR signer configuration (managed Kubernetes support)
-# This controls which Kubernetes signer is used for certificate CSRs.
-# - Vanilla Kubernetes: kubernetes.io/kube-apiserver-client
-# - EKS:                beta.eks.amazonaws.com/app-client
-# - GKE/AKS/custom:     set to your cluster's signer name
+# CSR signer configuration
+# This controls which Kubernetes signer is used for certificate CSRs. The
+# signer must issue "client auth" certificates from a CA that is in the API
+# server's --client-ca-file.
+# - Upstream / self-managed: kubernetes.io/kube-apiserver-client
+# - Custom signer: set this AND rbac.signerResourceNames below
+# Not every control plane signs client-auth CSRs (Amazon EKS does not). Run the
+# preflight check in docs/cluster-compatibility.md before deploying.
 signerName: "kubernetes.io/kube-apiserver-client"
 
 # Kubeconfig cluster name written into generated kubeconfigs

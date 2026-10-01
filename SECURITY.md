@@ -102,8 +102,12 @@ When deploying KubeUser in production:
   the namespaces and secrets it manages. Use namespace-scoped RBAC where possible.
 - **Set appropriate TTLs**: Use the shortest TTL appropriate for your environment.
   The default is `2160h` (90 days); consider reducing this for sensitive workloads.
-- **CSR signer**: For EKS or GKE, set `KUBEUSER_SIGNER_NAME` to the appropriate
-  platform-specific signer rather than using `kubernetes.io/kube-apiserver-client`.
+- **CSR signer**: Keep the default `kubernetes.io/kube-apiserver-client` unless your
+  cluster runs a custom signer whose CA is in the API server's `--client-ca-file`. If
+  you override `KUBEUSER_SIGNER_NAME`, also narrow `rbac.signerResourceNames` to that
+  single signer so the controller cannot approve CSRs for any other one. Note that
+  KubeUser cannot operate on control planes that do not sign `client auth` CSRs
+  (Amazon EKS) — see [Cluster Compatibility](docs/cluster-compatibility.md).
 - **Webhook TLS**: Ensure the mutating and validating webhooks are served over TLS
   with a valid certificate. Do not expose the webhook server without TLS.
 - **Image verification**: Verify the controller image signature with cosign before

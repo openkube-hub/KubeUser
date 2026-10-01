@@ -6,6 +6,19 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Changed
+- **Managed-Kubernetes support claims corrected.** The README advertised
+  "Managed K8s Support — configurable CSR signers for EKS, GKE, and vanilla
+  clusters". That was wrong for EKS: AWS does not expose a signer that issues
+  client certificates (`beta.eks.amazonaws.com/app-serving` permits only
+  `["key encipherment", "digital signature", "server auth"]` and the AWS docs
+  state "Client certificate signing is not supported"), so CSRs reach
+  `Approved`, are never issued, and no kubeconfig is ever produced —
+  reproduced on a real EKS cluster. Docs now state the actual requirement (a
+  signer issuing `client auth` certs from a CA in the API server's
+  `--client-ca-file`), mark EKS unsupported with alternatives, mark GKE/AKS
+  unverified, and ship a copy-paste preflight check. New doc:
+  `docs/cluster-compatibility.md`. See
+  [aws/containers-roadmap#1856](https://github.com/aws/containers-roadmap/issues/1856).
 - **Generated RoleBinding/ClusterRoleBinding names.** The scheme moved from
   `<user>-<role>-rb` / `<user>-<role>-crb` to
   `<user>-<sanitized-role>-<digest>-rb` / `-crb`, where the digest covers
@@ -48,6 +61,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   env var expose the drain window without rebuilding the binary.
 
 ### Removed
+- `beta.eks.amazonaws.com/app-client` from the default CSR signer RBAC grant
+  (`config/rbac/role.yaml`, kubebuilder marker) and from the Helm values
+  comments. No such signer exists — the EKS signer is
+  `beta.eks.amazonaws.com/app-serving`, and it is serving-only — so the grant
+  was dead configuration that only widened what the controller could approve.
+  Clusters with a genuine custom signer continue to set `signerName` and
+  `rbac.signerResourceNames` explicitly.
 - Package-level `activeReconcileCount` counter. Replaced by controller-runtime's
   built-in `workqueue_depth{name="user"}` metric. Existing Prometheus alerts
   referencing `kubeuser_workqueue_depth` must be repointed to `workqueue_depth`.

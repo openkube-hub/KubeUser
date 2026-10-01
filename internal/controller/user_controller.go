@@ -43,7 +43,7 @@ type UserReconciler struct {
 	EventRecorder     record.EventRecorder
 	AuthManager       *auth.Manager
 	RenewalCalculator *renewal.RenewalCalculator
-	SignerName        string // Configurable CSR signer for managed K8s support (EKS, GKE, AKS)
+	SignerName        string // CSR signer name; override only for clusters running a custom client-auth signer
 	ClusterName       string // Configurable kubeconfig cluster name
 	Metrics           *metrics.Recorder
 }
@@ -62,7 +62,7 @@ type UserReconciler struct {
 // CSR resources
 // +kubebuilder:rbac:groups=certificates.k8s.io,resources=certificatesigningrequests,verbs=create;get;list;watch;update;patch;delete
 // +kubebuilder:rbac:groups=certificates.k8s.io,resources=certificatesigningrequests/approval,verbs=update
-// +kubebuilder:rbac:groups=certificates.k8s.io,resources=signers,verbs=approve,resourceNames=kubernetes.io/kube-apiserver-client;beta.eks.amazonaws.com/app-client
+// +kubebuilder:rbac:groups=certificates.k8s.io,resources=signers,verbs=approve,resourceNames=kubernetes.io/kube-apiserver-client
 // Admission resources
 // +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=validatingwebhookconfigurations,verbs=get;patch
 // Events for operator visibility on state transitions (RotationStarted,

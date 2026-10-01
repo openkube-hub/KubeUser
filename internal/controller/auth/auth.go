@@ -54,7 +54,7 @@ type Manager struct {
 	eventRecorder record.EventRecorder
 	x509          Provider
 	oidc          Provider
-	signerName    string // Configurable signer for managed K8s support
+	signerName    string // CSR signer name; see docs/cluster-compatibility.md
 	clusterName   string // Configurable kubeconfig cluster name
 	metrics       *metrics.Recorder
 }

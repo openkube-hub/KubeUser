@@ -19,7 +19,11 @@ KubeUser 是一种 Kubernetes 原生的方式,用于以声明式方法管理用�
 
 KubeUser 通过自定义资源(CRD)以声明式方式管理 Kubernetes 用户来解决上述问题。它会自动生成并轮换证书、下发 RBAC 绑定,并使用原生 Kubernetes API 生成开箱即用的 kubeconfig。
 
-**面向对象:** 希望获得 Kubernetes 原生、对 GitOps 友好的访问控制方案,但又不需要完整 IAM 或 OIDC 体系的中小团队和自建集群。KubeUser **不是** 企业级身份提供商的替代品。
+**面向对象:** 自建集群 —— 裸金属、kubeadm、k3s/RKE2/Talos、边缘站点,以及气隙(air-gapped)与离线隔离环境 —— 希望获得 Kubernetes 原生、对 GitOps 友好的访问控制,而不必运行 IAM 或 OIDC 体系。KubeUser 所依赖的一切(CSR API、Secret、RBAC)都在集群内部,因此证书签发与轮换无需任何出网流量。KubeUser **不是** 企业级身份提供商的替代品。
+
+> **安装前请注意:** KubeUser 需要集群提供能够签发 `client auth`(客户端认证)证书的 signer。原生及自建发行版均满足该条件,但 **Amazon EKS 不满足** —— 其 signer 不支持客户端证书签发。在托管集群上请先执行
+> [预检脚本](docs/cluster-compatibility.md#preflight-check),详见
+> [集群兼容性](docs/cluster-compatibility.md)。
 
 ### 架构
 
@@ -54,7 +58,7 @@ KubeUser 通过自定义资源(CRD)以声明式方式管理 Kubernetes 用户来
 
 ## 快速开始
 
-在任意具有可用 `kubectl` 上下文的集群中,只需几条命令即可试用 KubeUser:
+在通过 [预检脚本](docs/cluster-compatibility.md#preflight-check) 的集群(原生 Kubernetes、kubeadm、k3s、kind 等)中,只需几条命令即可试用 KubeUser:
 
 ```bash
 # 1. 安装 cert-manager(webhook TLS 所需)
@@ -103,7 +107,7 @@ kubectl --kubeconfig alice.kubeconfig get pods -A
 - [x] **原子化 Secret 更新** —— 零停机的凭据切换,失败时自动回滚
 - [x] **动态 RBAC 协调** —— 自动管理 RoleBinding 与 ClusterRoleBinding
 - [x] **Mutating 与 Validating Webhook** —— 通过 cert-manager CA 注入的 TLS 保护
-- [x] **托管 K8s 支持** —— 可配置的 CSR signer,兼容 EKS、GKE 及原生集群
+- [x] **可配置的 CSR Signer** —— 可指向自定义 signer,只要其 CA 被 API server 信任用于客户端认证
 - [x] **反雪崩设计** —— 带抖动的智能 requeue、24h TTL 下限、33% 续期窗口,以及幂等的单次状态更新 reconcile 路径
 - [x] **高可用** —— 通过 Helm 提供 Leader 选举与多副本部署
 - [x] **Prometheus 指标与告警** —— 轮换计数器、耗时直方图、到期 Gauge,预置 Grafana 仪表盘和 PrometheusRule 告警
@@ -117,6 +121,8 @@ kubectl --kubeconfig alice.kubeconfig get pods -A
 - [ ] **kubectl 插件** —— `kubectl kubeuser kubeconfig <name>`,替代手动 `kubectl get secret | base64 -d` 流程
 - [ ] **审计日志** —— 每一次证书签发与轮换的不可变记录
 - [ ] **短生命周期证书 (< 24h)** —— 面向零信任场景的临时访问
+- [ ] **ServiceAccount Token 认证** —— 新增 `spec.auth.type: serviceAccountToken`,面向完全无法签发 client-auth CSR 的集群(如 EKS):Token 认证既不需要 signer,也不需要修改 API server 启动参数
+- [ ] **可插拔的证书签发后端** —— 支持通过 cert-manager、Vault 或 AWS Private CA 签发证书,替代集群 CSR API,适用于自有 CA 已配置在 API server `--client-ca-file` 中的集群
 - [ ] **ECDSA 密钥支持** —— 通过 `spec.auth.keyAlgorithm` 配置密钥算法
 - [ ] **OpenTelemetry Tracing** —— 覆盖 reconcile 与轮换路径的端到端追踪
 - [ ] **示例 Role 清单** —— 精选的、可直接应用的 `Role`/`ClusterRole` YAML 集合(只读、开发、命名空间管理员等常见访问模式)
@@ -312,11 +318,21 @@ kubectl --kubeconfig /tmp/kubeconfig get pods -n dev
 
 ---
 
-## 托管 Kubernetes 支持
+## 集群兼容性
 
-KubeUser 通过 Kubernetes CSR API 签发客户端证书,默认 signer 为 `kubernetes.io/kube-apiserver-client`,适用于任何允许第三方 client-auth CSR 签发的集群。
+KubeUser 通过 Kubernetes CSR API 签发客户端证书,因此要求集群提供一个能签发 `client auth` 证书、且其 CA 被 API server 信任的 signer(默认为 `kubernetes.io/kube-apiserver-client`)。
 
-对于使用自定义 CA 控制器的环境(例如 cert-manager CA issuer 转发到自定义 signer),可通过 Helm 覆盖:
+| 平台 | 状态 |
+|------|------|
+| kubeadm(原生)、kind、minikube、RKE2 | ✅ 已验证 |
+| k3s、k0s、Talos、MicroK8s、自建控制平面 | ✅ 预期可用 |
+| **Amazon EKS** | ❌ 不支持 —— EKS 的 signer 不支持客户端证书签发 |
+| GKE、AKS 及其他托管控制平面 | ⚠️ 未验证 —— 请先执行预检脚本 |
+
+在不兼容的集群上,CSR 只会停留在 `Approved` 而永远不会被签发(Issued),因此 `User` 会一直处于 `Pending`,`<username>-kubeconfig` Secret 也永远不会创建。部署前请使用
+[预检脚本](docs/cluster-compatibility.md#preflight-check) 确认:它会提交一个 client-auth CSR,预期结果是 `Approved,Issued`,而不是卡在 `Approved`。
+
+若集群使用自定义 signer(例如 cert-manager CA issuer 转发到自建 signer 控制器),需同时设置 signer 名称与对应的 RBAC approve 授权:
 
 ```bash
 helm install kubeuser kubeuser/kubeuser \
@@ -324,11 +340,7 @@ helm install kubeuser kubeuser/kubeuser \
   --set rbac.signerResourceNames[0]="<your-signer-name>"
 ```
 
-查看当前集群已接受的 signer:
-
-```bash
-kubectl get csr -o jsonpath='{range .items[*]}{.spec.signerName}{"\n"}{end}' | sort -u
-```
+完整的预检脚本、EKS 细节与替代方案,以及 KubeUser 的目标场景,请参阅 **[集群兼容性](docs/cluster-compatibility.md)**。
 
 ---
 
@@ -368,6 +380,7 @@ kubectl apply -f examples/users/minimal-viewer.yaml
 
 ## 文档
 
+- [集群兼容性](docs/cluster-compatibility.md)
 - [证书管理](docs/certificate-management.md)
 - [自动续期](docs/auto-renewal.md)
 - [Webhook 校验](docs/webhook-validation.md)

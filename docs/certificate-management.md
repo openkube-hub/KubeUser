@@ -260,7 +260,10 @@ kubectl --kubeconfig <(kubectl get secret username-kubeconfig -n kubeuser -o jso
 
 ## Prerequisites
 
-1. **Kubernetes Cluster**: v1.28+ with CSR API enabled
+1. **Kubernetes Cluster**: v1.28+ with a signer that issues `client auth`
+   certificates from a CA in the API server's `--client-ca-file`. Upstream and
+   self-managed distributions qualify; Amazon EKS does not. See
+   [Cluster Compatibility](cluster-compatibility.md).
 
 2. **RBAC Permissions**: Controller needs CSR management permissions:
    ```yaml
