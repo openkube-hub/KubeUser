@@ -19,7 +19,7 @@ Managing Kubernetes access often means manually creating kubeconfigs, handling c
 
 KubeUser solves this by managing Kubernetes users through declarative custom resources. It automatically generates and rotates certificates, applies RBAC bindings, and produces ready-to-use kubeconfigs using native Kubernetes APIs.
 
-**Designed for** self-managed clusters — bare metal, kubeadm, k3s/RKE2/Talos, edge sites, and air-gapped or disconnected environments — that want Kubernetes-native, GitOps-friendly access control without running an IAM or OIDC stack. Everything KubeUser needs (the CSR API, Secrets, RBAC) lives inside the cluster, so issuance and rotation work with no egress. Not a replacement for enterprise identity providers.
+**Designed for** self-managed clusters — bare metal, kubeadm, k3s/RKE2/Talos, edge sites, and air-gapped or disconnected environments — that want Kubernetes-native, GitOps-friendly access control without running an IAM or OIDC stack.
 
 > **Before you install:** KubeUser needs a cluster signer that issues `client auth`
 > certificates — true for upstream and self-managed distributions, **not for Amazon

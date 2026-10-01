@@ -19,7 +19,7 @@ KubeUser 是一种 Kubernetes 原生的方式,用于以声明式方法管理用�
 
 KubeUser 通过自定义资源(CRD)以声明式方式管理 Kubernetes 用户来解决上述问题。它会自动生成并轮换证书、下发 RBAC 绑定,并使用原生 Kubernetes API 生成开箱即用的 kubeconfig。
 
-**面向对象:** 自建集群 —— 裸金属、kubeadm、k3s/RKE2/Talos、边缘站点,以及气隙(air-gapped)与离线隔离环境 —— 希望获得 Kubernetes 原生、对 GitOps 友好的访问控制,而不必运行 IAM 或 OIDC 体系。KubeUser 所依赖的一切(CSR API、Secret、RBAC)都在集群内部,因此证书签发与轮换无需任何出网流量。KubeUser **不是** 企业级身份提供商的替代品。
+**面向对象:** 自建集群 —— 裸金属、kubeadm、k3s/RKE2/Talos、边缘站点,以及气隙(air-gapped)与离线隔离环境 —— 希望获得 Kubernetes 原生、对 GitOps 友好的访问控制,而不必运行 IAM 或 OIDC 体系。
 
 > **安装前请注意:** KubeUser 需要集群提供能签发 `client auth` 证书的 signer —— 原生及自建发行版均满足,但 **Amazon EKS 不满足**。托管集群请先执行
 > [预检脚本](docs/cluster-compatibility.md#preflight-check)。
