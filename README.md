@@ -118,16 +118,9 @@ For production installs, see [Installation](#installation) below.
 
 #### 🚧 Planned
 
-- [ ] **Deletion Warning Event** — admission warning and Warning event on User delete clarifying that issued certs remain cryptographically valid until expiry (Kubernetes does not consult CRL/OCSP for client certs)
-- [ ] **kubectl Plugin** — `kubectl kubeuser kubeconfig <name>` to replace the manual `kubectl get secret | base64 -d` flow
-- [ ] **Audit Log** — immutable record of every certificate issuance and rotation event
-- [ ] **Short-Lived Certificates (< 24h)** — sub-24h TTL for ephemeral, zero-trust access
-- [ ] **ServiceAccount Token Auth** — `spec.auth.type: serviceAccountToken` for clusters that cannot sign client-auth CSRs at all (EKS), since token auth needs no signer and no API server flags
-- [ ] **Pluggable Certificate Issuers** — issue via cert-manager, Vault, or AWS Private CA instead of the cluster CSR API, for clusters whose own CA is already in the API server's `--client-ca-file`
-- [ ] **ECDSA Key Support** — configurable key algorithm via `spec.auth.keyAlgorithm`
-- [ ] **OpenTelemetry Tracing** — end-to-end traces across reconcile and rotation paths
-- [ ] **Example Role Manifests** — a curated folder of well-defined, ready-to-apply `Role`/`ClusterRole` YAMLs for common access patterns (read-only, developer, namespace-admin) that users can reference directly
 - [ ] **Self-Service Kubeconfig Bootstrap & Sync** — `kubeuser init`/`kubeuser sync` CLI with email-delivered, single-use bootstrap tokens and mTLS-authenticated credential sync ([tracking epic](https://github.com/openkube-hub/KubeUser/issues/111))
+- [ ] **kubectl Plugin** — `kubectl kubeuser kubeconfig <name>` to replace the manual `kubectl get secret | base64 -d` flow
+- [ ] **Deletion Warning Event** — admission warning and Warning event on User delete clarifying that issued certs remain cryptographically valid until expiry (Kubernetes does not consult CRL/OCSP for client certs)
 
 ---
 

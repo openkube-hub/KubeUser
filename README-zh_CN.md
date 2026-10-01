@@ -116,16 +116,9 @@ kubectl --kubeconfig alice.kubeconfig get pods -A
 
 #### 🚧 规划中
 
-- [ ] **删除告警事件** —— User 删除时通过 admission warning 和 Warning 事件提醒:已签发证书在自然过期前仍然密码学有效(Kubernetes 不会为客户端证书查询 CRL/OCSP)
-- [ ] **kubectl 插件** —— `kubectl kubeuser kubeconfig <name>`,替代手动 `kubectl get secret | base64 -d` 流程
-- [ ] **审计日志** —— 每一次证书签发与轮换的不可变记录
-- [ ] **短生命周期证书 (< 24h)** —— 面向零信任场景的临时访问
-- [ ] **ServiceAccount Token 认证** —— 新增 `spec.auth.type: serviceAccountToken`,面向完全无法签发 client-auth CSR 的集群(如 EKS):Token 认证既不需要 signer,也不需要修改 API server 启动参数
-- [ ] **可插拔的证书签发后端** —— 支持通过 cert-manager、Vault 或 AWS Private CA 签发证书,替代集群 CSR API,适用于自有 CA 已配置在 API server `--client-ca-file` 中的集群
-- [ ] **ECDSA 密钥支持** —— 通过 `spec.auth.keyAlgorithm` 配置密钥算法
-- [ ] **OpenTelemetry Tracing** —— 覆盖 reconcile 与轮换路径的端到端追踪
-- [ ] **示例 Role 清单** —— 精选的、可直接应用的 `Role`/`ClusterRole` YAML 集合(只读、开发、命名空间管理员等常见访问模式)
 - [ ] **自助 Kubeconfig 引导与同步** —— `kubeuser init`/`kubeuser sync` CLI,支持邮件下发的一次性引导 Token 和基于 mTLS 认证的凭据同步 ([跟踪 issue](https://github.com/openkube-hub/KubeUser/issues/111))
+- [ ] **kubectl 插件** —— `kubectl kubeuser kubeconfig <name>`,替代手动 `kubectl get secret | base64 -d` 流程
+- [ ] **删除告警事件** —— User 删除时通过 admission warning 和 Warning 事件提醒:已签发证书在自然过期前仍然密码学有效(Kubernetes 不会为客户端证书查询 CRL/OCSP)
 
 ---
 
