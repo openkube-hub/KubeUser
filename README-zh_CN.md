@@ -324,8 +324,9 @@ KubeUser 通过 Kubernetes CSR API 签发客户端证书,因此要求集群提�
 
 | 平台 | 状态 |
 |------|------|
-| kubeadm(原生)、kind、minikube、RKE2 | ✅ 已验证 |
-| k3s、k0s、Talos、MicroK8s、自建控制平面 | ✅ 预期可用 |
+| kubeadm(原生)、kind、minikube、Kubespray、RKE2 | ✅ 已验证 |
+| k3s、k0s、Talos、MicroK8s | ✅ 预期可用 |
+| 全手工搭建的控制平面 | ⚠️ 取决于 `kube-controller-manager` 与 `--client-ca-file` 的参数配置 |
 | **Amazon EKS** | ❌ 不支持 —— EKS 的 signer 不支持客户端证书签发 |
 | GKE、AKS 及其他托管控制平面 | ⚠️ 未验证 —— 请先执行预检脚本 |
 

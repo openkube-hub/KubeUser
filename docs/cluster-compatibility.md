@@ -28,9 +28,10 @@ indefinitely — see [Symptoms](#symptoms-of-an-incompatible-signer).
 | Platform | Status | Notes |
 |----------|--------|-------|
 | kubeadm (upstream), kind, minikube | ✅ **Verified** | Default signer path; `make test-e2e` runs against kind |
-| RKE2 | ✅ **Verified** | Manually verified end to end with the default signer |
-| k3s, k0s, Talos, MicroK8s | ✅ **Expected to work** | Run the stock `csrsigning` controller with the cluster CA; not covered by CI |
-| Self-managed control planes (bare metal, VMs, any IaaS) | ✅ **Expected to work** | You control `kube-controller-manager` and `--client-ca-file` |
+| Kubespray | ✅ **Verified** | Verified end to end; bootstraps with kubeadm, so it inherits the layout below |
+| RKE2 | ✅ **Verified** | Verified end to end with the default signer |
+| k3s, k0s, Talos, MicroK8s | ✅ **Expected to work** | Follow the kubeadm layout: one cluster CA used for both signing and client auth; not covered by CI |
+| Hand-rolled control planes | ⚠️ **Depends on your flags** | See [below](#hand-rolled-control-planes) |
 | **Amazon EKS** | ❌ **Not supported** | The EKS signer refuses `client auth`; see [below](#amazon-eks) |
 | GKE, AKS, other managed control planes | ⚠️ **Unverified** | Run the [preflight check](#preflight-check) before deploying |
 
@@ -38,6 +39,41 @@ indefinitely — see [Symptoms](#symptoms-of-an-incompatible-signer).
 KubeUser has no platform-specific code for it — not that a maintainer has run
 the end-to-end flow there. If you verify (or disprove) one of these, please
 open a PR updating this table.
+
+The installer is not what matters; the resulting flags are. kubeadm (and
+therefore Kubespray) satisfies both requirements by default, because it points
+signing and client auth at the same CA:
+
+```
+# kube-controller-manager
+--cluster-signing-cert-file=/etc/kubernetes/pki/ca.crt
+--cluster-signing-key-file=/etc/kubernetes/pki/ca.key
+# kube-apiserver
+--client-ca-file=/etc/kubernetes/pki/ca.crt
+```
+
+## Hand-rolled Control Planes
+
+If you assembled the control plane yourself rather than through a distribution,
+"self-managed" is not a guarantee — the flags you chose decide it, and two
+mistakes are easy to make:
+
+| Misconfiguration | Result |
+|------------------|--------|
+| `kube-controller-manager` has no `--cluster-signing-cert-file` / `--cluster-signing-key-file`, or `csrsigning` is excluded from `--controllers` | CSR is approved and never issued — the same symptom as EKS, a different cause |
+| The signing CA differs from the CA in the API server's `--client-ca-file` (common when the client CA is a separate intermediate) | Certificate issues fine, then every request is rejected `Unauthorized` |
+
+Check both before deploying:
+
+```bash
+# On a control-plane node
+ps aux | grep kube-controller-manager | tr ' ' '\n' | grep cluster-signing
+ps aux | grep kube-apiserver | tr ' ' '\n' | grep client-ca-file
+# The signing cert and the client CA should be the same file, or the signing
+# CA must chain to a CA inside the client-ca-file bundle.
+```
+
+Then run the [preflight check](#preflight-check), which proves it end to end.
 
 ---
 
@@ -203,8 +239,8 @@ against it by substituting the `signerName` field.
 The requirement above — a cluster whose control plane you own, or at least
 whose signer behaves like upstream — is also where KubeUser is most useful:
 
-- **Self-managed and bare-metal clusters** (kubeadm, k3s, RKE2, Talos), where
-  there is no cloud IAM to inherit identities from.
+- **Self-managed and bare-metal clusters** (kubeadm, Kubespray, k3s, RKE2,
+  Talos), where there is no cloud IAM to inherit identities from.
 - **Air-gapped and disconnected environments**, where an external OIDC
   provider is unreachable by design. KubeUser depends on nothing outside the
   cluster: the CSR API, Secrets, and RBAC are all local, so credential

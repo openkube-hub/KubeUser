@@ -328,8 +328,9 @@ cluster signer that issues `client auth` certificates from a CA the API server t
 
 | Platform | Status |
 |----------|--------|
-| kubeadm (upstream), kind, minikube, RKE2 | ✅ Verified |
-| k3s, k0s, Talos, MicroK8s, self-managed control planes | ✅ Expected to work |
+| kubeadm (upstream), kind, minikube, Kubespray, RKE2 | ✅ Verified |
+| k3s, k0s, Talos, MicroK8s | ✅ Expected to work |
+| Hand-rolled control planes | ⚠️ Depends on your `kube-controller-manager` and `--client-ca-file` flags |
 | **Amazon EKS** | ❌ Not supported — the EKS signer does not support client certificate signing |
 | GKE, AKS, other managed control planes | ⚠️ Unverified — run the preflight check |
 
