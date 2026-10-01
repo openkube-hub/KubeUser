@@ -21,9 +21,8 @@ KubeUser 通过自定义资源(CRD)以声明式方式管理 Kubernetes 用户来
 
 **面向对象:** 自建集群 —— 裸金属、kubeadm、k3s/RKE2/Talos、边缘站点,以及气隙(air-gapped)与离线隔离环境 —— 希望获得 Kubernetes 原生、对 GitOps 友好的访问控制,而不必运行 IAM 或 OIDC 体系。KubeUser 所依赖的一切(CSR API、Secret、RBAC)都在集群内部,因此证书签发与轮换无需任何出网流量。KubeUser **不是** 企业级身份提供商的替代品。
 
-> **安装前请注意:** KubeUser 需要集群提供能够签发 `client auth`(客户端认证)证书的 signer。原生及自建发行版均满足该条件,但 **Amazon EKS 不满足** —— 其 signer 不支持客户端证书签发。在托管集群上请先执行
-> [预检脚本](docs/cluster-compatibility.md#preflight-check),详见
-> [集群兼容性](docs/cluster-compatibility.md)。
+> **安装前请注意:** KubeUser 需要集群提供能签发 `client auth` 证书的 signer —— 原生及自建发行版均满足,但 **Amazon EKS 不满足**。托管集群请先执行
+> [预检脚本](docs/cluster-compatibility.md#preflight-check)。
 
 ### 架构
 
@@ -320,30 +319,15 @@ kubectl --kubeconfig /tmp/kubeconfig get pods -n dev
 
 ## 集群兼容性
 
-KubeUser 通过 Kubernetes CSR API 签发客户端证书,因此要求集群提供一个能签发 `client auth` 证书、且其 CA 被 API server 信任的 signer(默认为 `kubernetes.io/kube-apiserver-client`)。
+KubeUser 通过 Kubernetes CSR API 签发客户端证书,因此集群必须提供一个能签发 `client auth` 证书、且其 CA 被 API server 信任的 signer(默认 `kubernetes.io/kube-apiserver-client`)。
 
-| 平台 | 状态 |
-|------|------|
-| kubeadm(原生)、kind、minikube、Kubespray、RKE2 | ✅ 已验证 |
-| k3s、k0s、Talos、MicroK8s | ✅ 预期可用 |
-| 全手工搭建的控制平面 | ⚠️ 取决于 `kube-controller-manager` 与 `--client-ca-file` 的参数配置 |
-| **Amazon EKS** | ❌ 不支持 —— EKS 的 signer 不支持客户端证书签发 |
-| GKE、AKS 及其他托管控制平面 | ⚠️ 未验证 —— 与 EKS 不同,官方文档未声明任何限制;请先执行预检脚本 |
+- ✅ 已在 kubeadm、kind、minikube、Kubespray 与 RKE2 上验证;遵循 kubeadm CA 布局的发行版预期均可用。
+- ❌ **不支持 Amazon EKS** —— AWS 不签发 client-auth CSR,且无任何配置可绕过。
+- ⚠️ GKE、AKS 及其他托管厂商尚未验证;EKS 属于特例而非普遍情况。请先执行
+  [预检脚本](docs/cluster-compatibility.md#preflight-check)。
 
-EKS 属于特例:AWS 用自己的 signer 替换了上游签发行为,并将 usage 限制在 `server auth`。其他厂商均未声明类似限制;而且某厂商的 *节点* 通过 CSR API 引导并不能说明面向用户的 signer 可用 —— kubelet 使用的是另一个 signer。
-
-在不兼容的集群上,CSR 只会停留在 `Approved` 而永远不会被签发(Issued),因此 `User` 会一直处于 `Pending`,`<username>-kubeconfig` Secret 也永远不会创建。部署前请使用
-[预检脚本](docs/cluster-compatibility.md#preflight-check) 确认:它会提交一个 client-auth CSR,预期结果是 `Approved,Issued`,而不是卡在 `Approved`。
-
-若集群使用自定义 signer(例如 cert-manager CA issuer 转发到自建 signer 控制器),需同时设置 signer 名称与对应的 RBAC approve 授权:
-
-```bash
-helm install kubeuser kubeuser/kubeuser \
-  --set signerName="<your-signer-name>" \
-  --set rbac.signerResourceNames[0]="<your-signer-name>"
-```
-
-完整的预检脚本、EKS 细节与替代方案,以及 KubeUser 的目标场景,请参阅 **[集群兼容性](docs/cluster-compatibility.md)**。
+完整兼容性矩阵、预检脚本、EKS 替代方案与自定义 signer 配置,请参阅
+**[集群兼容性](docs/cluster-compatibility.md)**。
 
 ---
 

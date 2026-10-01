@@ -22,10 +22,9 @@ KubeUser solves this by managing Kubernetes users through declarative custom res
 **Designed for** self-managed clusters — bare metal, kubeadm, k3s/RKE2/Talos, edge sites, and air-gapped or disconnected environments — that want Kubernetes-native, GitOps-friendly access control without running an IAM or OIDC stack. Everything KubeUser needs (the CSR API, Secrets, RBAC) lives inside the cluster, so issuance and rotation work with no egress. Not a replacement for enterprise identity providers.
 
 > **Before you install:** KubeUser needs a cluster signer that issues `client auth`
-> certificates. That holds for upstream and self-managed distributions, but **not for
-> Amazon EKS**, whose signer does not support client certificate signing. Run the
-> [preflight check](docs/cluster-compatibility.md#preflight-check) on managed clusters
-> first — see [Cluster Compatibility](docs/cluster-compatibility.md).
+> certificates — true for upstream and self-managed distributions, **not for Amazon
+> EKS**. Run the [preflight check](docs/cluster-compatibility.md#preflight-check) on
+> managed clusters first.
 
 ### Architecture
 
@@ -322,40 +321,19 @@ kubectl --kubeconfig /tmp/kubeconfig get pods -n dev
 
 ## Cluster Compatibility
 
-KubeUser issues client certificates via the Kubernetes CSR API, so it requires a
-cluster signer that issues `client auth` certificates from a CA the API server trusts
+KubeUser issues client certificates via the Kubernetes CSR API, so the cluster needs a
+signer that issues `client auth` certificates from a CA the API server trusts
 (`kubernetes.io/kube-apiserver-client` by default).
 
-| Platform | Status |
-|----------|--------|
-| kubeadm (upstream), kind, minikube, Kubespray, RKE2 | ✅ Verified |
-| k3s, k0s, Talos, MicroK8s | ✅ Expected to work |
-| Hand-rolled control planes | ⚠️ Depends on your `kube-controller-manager` and `--client-ca-file` flags |
-| **Amazon EKS** | ❌ Not supported — the EKS signer does not support client certificate signing |
-| GKE, AKS, other managed control planes | ⚠️ Unverified — no documented restriction, unlike EKS; run the preflight check |
+- ✅ Verified on kubeadm, kind, minikube, Kubespray and RKE2; expected to work on any
+  distribution that follows the kubeadm CA layout.
+- ❌ **Not supported on Amazon EKS** — AWS does not sign client-auth CSRs, and no
+  configuration works around it.
+- ⚠️ GKE, AKS and other managed providers are unverified; EKS is an outlier, not the
+  rule. Run the [preflight check](docs/cluster-compatibility.md#preflight-check) first.
 
-EKS is an outlier: AWS replaced the upstream signing behavior with its own signer
-capped at `server auth`. No other provider documents an equivalent restriction, and a
-provider whose *nodes* bootstrap via the CSR API proves nothing about the user-facing
-signer — kubelets use a different one.
-
-On an incompatible cluster the CSR reaches `Approved` and is never issued, so the
-`User` stays in `Pending` and no `<username>-kubeconfig` secret is ever created.
-Check before you deploy with the
-[preflight check](docs/cluster-compatibility.md#preflight-check): it submits one
-client-auth CSR and expects `Approved,Issued` rather than a CSR stuck at `Approved`.
-
-For a custom signer (for example a cert-manager CA issuer fronting your own signer
-controller), set both the signer name and the RBAC grant to approve it:
-
-```bash
-helm install kubeuser kubeuser/kubeuser \
-  --set signerName="<your-signer-name>" \
-  --set rbac.signerResourceNames[0]="<your-signer-name>"
-```
-
-See **[Cluster Compatibility](docs/cluster-compatibility.md)** for the preflight
-script, the EKS details and alternatives, and the environments KubeUser targets.
+Full matrix, the preflight script, EKS alternatives and custom-signer setup:
+**[Cluster Compatibility](docs/cluster-compatibility.md)**.
 
 ---
 

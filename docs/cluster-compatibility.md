@@ -19,7 +19,8 @@ inside the operator:
 A cluster that approves CSRs but never populates `.status.certificate`, or
 whose signer uses a CA the API server does not trust for client auth, cannot
 be served by KubeUser. The operator will keep the `User` in `Pending`
-indefinitely — see [Symptoms](#symptoms-of-an-incompatible-signer).
+indefinitely — see
+[Troubleshooting](troubleshooting.md#csr-stuck-at-approved--no-kubeconfig-secret).
 
 ---
 
@@ -76,9 +77,9 @@ ps aux | grep kube-apiserver | tr ' ' '\n' | grep client-ca-file
 
 Then run the [preflight check](#preflight-check), which proves it end to end.
 
-Distributions can land here too. RKE1, for example, does not set the signing
-flags by default; CSRs are approved and never issued until the cluster
-configuration enables them:
+Distributions can land here too: RKE1 does not set the signing flags by
+default (RKE2 does), so CSRs are approved and never issued until the cluster
+config adds them:
 
 ```yaml
 kube-controller:
@@ -86,8 +87,6 @@ kube-controller:
     cluster-signing-cert-file: /etc/kubernetes/ssl/kube-ca.pem
     cluster-signing-key-file: /etc/kubernetes/ssl/kube-ca-key.pem
 ```
-
-(RKE2 is unaffected — it is verified above.)
 
 ---
 
@@ -136,132 +135,79 @@ kubectl delete csr kubeuser-preflight
 rm -f "$KEY" "$CSR"
 ```
 
-If the check passes, confirm the issued certificate actually authenticates —
-a signer can issue from a CA the API server does not trust for client auth:
+A signer can also issue from a CA the API server does not trust for client
+auth, so confirm the certificate actually authenticates:
 
 ```bash
 kubectl get csr kubeuser-preflight -o jsonpath='{.status.certificate}' \
   | base64 -d > /tmp/preflight.crt
-# Build a kubeconfig with /tmp/preflight.crt + "$KEY" and expect
-# "Unauthorized" to be absent (RBAC "forbidden" is a pass — it means the
-# certificate authenticated).
+API=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+curl -sk --cert /tmp/preflight.crt --key "$KEY" "$API/apis" \
+  -o /dev/null -w '%{http_code}\n'
 ```
+
+`200` or `403` is a pass — the certificate authenticated (`403` only means the
+identity has no RBAC yet). `401` means the signing CA is not in the API
+server's `--client-ca-file`.
 
 ---
 
 ## Amazon EKS
 
-**KubeUser does not work on Amazon EKS.** This is a platform limitation, not a
-bug in KubeUser, and there is no configuration that works around it.
-
-EKS does not expose a signer that issues client certificates. Its only
-user-facing signer is `beta.eks.amazonaws.com/app-serving`, and the AWS
-documentation states its permitted key usages are limited to
-`["key encipherment", "digital signature", "server auth"]`, adding plainly:
+**KubeUser does not work on Amazon EKS**, and no configuration works around it.
+EKS exposes no signer that issues client certificates. Its only user-facing
+signer, `beta.eks.amazonaws.com/app-serving`, caps usages at
+`["key encipherment", "digital signature", "server auth"]`, and the AWS
+documentation states plainly:
 
 > Client certificate signing is not supported.
 
 — [Secure workloads with Kubernetes certificates](https://docs.aws.amazon.com/eks/latest/userguide/cert-signing.html)
 
-`kubernetes.io/kube-apiserver-client` exists on EKS as an API value, but the
-managed control plane runs no signer behind it: CSRs reach `Approved` and are
-never issued. This is tracked upstream as
+`kubernetes.io/kube-apiserver-client` exists as an API value but nothing serves
+it: CSRs reach `Approved` and are never issued, so the `User` stays in
+`Pending` and no kubeconfig secret is ever created. Tracked as
 [aws/containers-roadmap#1856](https://github.com/aws/containers-roadmap/issues/1856)
-(open since October 2022).
+(open since October 2022). For the diagnostic walkthrough, see
+[Troubleshooting](troubleshooting.md#csr-stuck-at-approved--no-kubeconfig-secret).
 
-### EKS is an outlier, not the rule for managed Kubernetes
-
-EKS fails because AWS replaced the upstream `csrsigning` behavior with its own
-signer that caps usages at `server auth`. That is an EKS-specific decision, not
-a property of running a managed control plane, so do not assume GKE, AKS or any
-other provider behaves the same way — none of them documents an equivalent
-restriction.
-
-One trap is worth naming, because it is how EKS misleads: **a provider whose
-nodes bootstrap through the CSR API tells you nothing about the user-facing
-signer.** Kubelet certificates use a different signer
-(`kubernetes.io/kube-apiserver-client-kubelet`), and a provider can keep that
-one working for node bootstrap while leaving `kubernetes.io/kube-apiserver-client`
-unserved. Seeing node CSRs reach `Approved,Issued` is not evidence that
-KubeUser will work. Only the [preflight check](#preflight-check) is.
-
-### Symptoms of an incompatible signer
-
-What you see on EKS, and on any cluster that fails the preflight check:
-
-```bash
-$ kubectl get user alice
-NAME    PHASE     AUTORENEW   EXPIRY   NEXTRENEWAL   AGE
-alice   Pending   true                               6m
-
-$ kubectl get csr -l auth.openkube.io/user=alice
-NAME    SIGNERNAME                            CONDITION
-alice   kubernetes.io/kube-apiserver-client   Approved          # never "Approved,Issued"
-
-$ kubectl get secret -n kubeuser | grep alice
-alice-key          Opaque   1   6m                              # created
-                                                                # alice-kubeconfig never appears
-```
-
-Controller logs repeat, by design, until the certificate appears:
-
-```
-INFO  Waiting for certificate to be issued   {"csr": "alice"}
-```
-
-The `User` stays in `Pending`, the private key secret exists, and the
-`<username>-kubeconfig` secret is never created because there is no
-certificate to put in it.
-
-Swapping in an external CA does not help either. A client certificate only
-authenticates if its CA is in the API server's `--client-ca-file`, and EKS does
-not expose API server flags — so a certificate from cert-manager, Vault or AWS
-Private CA would be issued successfully and still be rejected as
-`Unauthorized`. The limitation is in the authentication path, not the issuance
+An external CA does not help either: a client certificate only authenticates if
+its CA is in the API server's `--client-ca-file`, and EKS does not expose API
+server flags. The limitation is in the authentication path, not the issuance
 path.
+
+EKS fails because AWS replaced the upstream signer, not because it is managed,
+so do not generalize to other providers. One trap: **a provider whose nodes
+bootstrap through the CSR API proves nothing about the user-facing signer**,
+because kubelets use `kubernetes.io/kube-apiserver-client-kubelet`. Only the
+[preflight check](#preflight-check) is evidence.
 
 ### What to use on EKS instead
 
-EKS authenticates users through IAM, not x509:
-
 - **EKS access entries** (`aws eks create-access-entry`) — the current,
-  recommended path; maps IAM principals to Kubernetes groups/access policies.
+  recommended path; maps IAM principals to Kubernetes groups.
 - **`aws-auth` ConfigMap** — the legacy equivalent, still supported.
-- **OIDC provider** — associate an external IdP with the cluster
-  (`aws eks associate-identity-provider-config`) for non-IAM identities.
-
-The same reasoning applies to any managed control plane that does not sign
-client-auth CSRs: use the platform's own identity integration.
-
----
+- **OIDC provider** — `aws eks associate-identity-provider-config`, for
+  non-IAM identities.
 
 ---
 
 ## Other Managed Providers
 
-GKE and AKS are marked **Unverified** rather than supported or unsupported,
-deliberately:
+No provider other than EKS documents a restriction on client-auth signing.
+These are **Unverified** because nobody has run the flow on them, not because
+anything is known to block them:
 
-- **GKE** — the cluster root CA both signs CSRs submitted through
-  `certificates.k8s.io` and is what the API server uses to validate client
-  certificates, which is the combination KubeUser needs
-  ([Cluster trust](https://docs.cloud.google.com/kubernetes-engine/docs/concepts/cluster-trust)).
-  Google documents no restriction on client-auth signing, and
-  `--no-issue-client-certificate` disables only *legacy* GKE client-certificate
-  issuance, not the certificates API. Nothing documented blocks KubeUser, but
-  Google does not document the user-facing signer's behavior either.
-- **AKS** — no documented restriction on client-auth CSRs. Note separately
-  that on clusters with `--disable-local-accounts` and Microsoft Entra
-  integration, certificate-based identities run counter to the cluster's
-  intended auth posture, and rotating cluster certificates to revoke local
-  accounts will invalidate KubeUser-issued certificates too.
-- **DOKS, LKE, Civo, OKE, ACK, Scaleway, OVH and similar** — no authoritative
-  statement either way. Most run a control plane close to upstream.
+| Provider | Documented restriction | Notes |
+|----------|------------------------|-------|
+| GKE | None | The cluster root CA signs `certificates.k8s.io` CSRs and is what the API server validates client certificates against ([Cluster trust](https://docs.cloud.google.com/kubernetes-engine/docs/concepts/cluster-trust)). `--no-issue-client-certificate` disables only *legacy* client-cert issuance, not the certificates API |
+| AKS | None | With `--disable-local-accounts` and Entra integration, certificate identities run counter to the cluster's auth posture, and rotating cluster certificates to revoke local accounts invalidates KubeUser certificates too |
+| DOKS, LKE, Civo, OKE, ACK, Scaleway, OVH | None found | Mostly near-upstream control planes |
 
-In every one of these cases the preflight check answers the question in under a
-minute, and the answer is authoritative for *your* cluster and version. Claiming
-support without running it is how the EKS claim got into this project's README
-in the first place.
+Run the [preflight check](#preflight-check): one minute, and authoritative for
+your cluster and version.
+
+---
 
 ## Custom Signers
 
@@ -289,27 +235,3 @@ kubectl get csr -o jsonpath='{range .items[*]}{.spec.signerName}{"\n"}{end}' \
 Note that a signer appearing in that list is not proof it will sign a
 client-auth request for you — run the [preflight check](#preflight-check)
 against it by substituting the `signerName` field.
-
----
-
-## Where KubeUser Fits
-
-The requirement above — a cluster whose control plane you own, or at least
-whose signer behaves like upstream — is also where KubeUser is most useful:
-
-- **Self-managed and bare-metal clusters** (kubeadm, Kubespray, k3s, RKE2,
-  Talos), where there is no cloud IAM to inherit identities from.
-- **Air-gapped and disconnected environments**, where an external OIDC
-  provider is unreachable by design. KubeUser depends on nothing outside the
-  cluster: the CSR API, Secrets, and RBAC are all local, so credential
-  issuance and rotation keep working with no egress.
-- **Edge and on-premise fleets**, where each site runs its own small control
-  plane and operating a per-site IdP is disproportionate.
-- **Regulated or sovereign deployments** that cannot route authentication
-  through a third-party identity service.
-- **Lab, CI, and homelab clusters**, where OIDC setup costs more than the
-  access it grants.
-
-It is not a replacement for an enterprise identity provider: certificates
-cannot be revoked before expiry (Kubernetes does not consult CRL/OCSP for
-client certs), so keep TTLs short where that matters.
