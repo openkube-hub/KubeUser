@@ -2,6 +2,7 @@ package renewal
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -278,6 +279,53 @@ func TestRotationManager_recordUniqueAttempt_Basic(t *testing.T) {
 
 	if user.Status.RenewalHistory[0].Message != "Test attempt" {
 		t.Errorf("Expected message 'Test attempt', got %s", user.Status.RenewalHistory[0].Message)
+	}
+}
+
+// The CRD caps status.renewalHistory at maxItems=10, so the recorder must
+// never produce a longer list — including when it starts from a history that
+// is already over the cap (written directly to the status subresource, or
+// persisted before the schema bound existed). Otherwise every subsequent
+// status update on that User is rejected by the API server.
+func TestRotationManager_recordUniqueAttempt_CapsHistory(t *testing.T) {
+	rm := NewRotationManager(nil, nil, "", "", nil)
+
+	history := func(n int) []authv1alpha1.RenewalAttempt {
+		h := make([]authv1alpha1.RenewalAttempt, n)
+		for i := range h {
+			h[i] = authv1alpha1.RenewalAttempt{Message: fmt.Sprintf("attempt-%d", i)}
+		}
+		return h
+	}
+
+	tests := []struct {
+		name       string
+		existing   int
+		wantLen    int
+		wantOldest string
+	}{
+		{name: "below cap appends", existing: 3, wantLen: 4, wantOldest: "attempt-0"},
+		{name: "at cap drops oldest", existing: 10, wantLen: 10, wantOldest: "attempt-1"},
+		{name: "over cap converges to cap", existing: 15, wantLen: 10, wantOldest: "attempt-6"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			user := &authv1alpha1.User{Status: authv1alpha1.UserStatus{RenewalHistory: history(tt.existing)}}
+
+			rm.recordUniqueAttempt(user, authv1alpha1.RenewalAttempt{Message: "new"})
+
+			got := user.Status.RenewalHistory
+			if len(got) != tt.wantLen {
+				t.Fatalf("history length = %d, want %d (CRD maxItems is %d)", len(got), tt.wantLen, maxRenewalHistory)
+			}
+			if got[0].Message != tt.wantOldest {
+				t.Errorf("oldest entry = %q, want %q", got[0].Message, tt.wantOldest)
+			}
+			if got[len(got)-1].Message != "new" {
+				t.Errorf("newest entry = %q, want %q", got[len(got)-1].Message, "new")
+			}
+		})
 	}
 }
 

@@ -236,7 +236,9 @@ spec:
                   Expired, Error, Renewing)
                 type: string
               renewalHistory:
-                description: RenewalHistory tracks recent renewal attempts for observability
+                description: |-
+                  RenewalHistory tracks recent renewal attempts for observability.
+                  MaxItems mirrors the cap the controller enforces when recording attempts.
                 items:
                   description: RenewalAttempt tracks a single renewal attempt
                   properties:
@@ -258,6 +260,7 @@ spec:
                   - success
                   - timestamp
                   type: object
+                maxItems: 10
                 type: array
               rotationStep:
                 description: |-

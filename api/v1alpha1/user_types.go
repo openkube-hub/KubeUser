@@ -119,8 +119,10 @@ type UserStatus struct {
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
-	// RenewalHistory tracks recent renewal attempts for observability
+	// RenewalHistory tracks recent renewal attempts for observability.
+	// MaxItems mirrors the cap the controller enforces when recording attempts.
 	// +optional
+	// +kubebuilder:validation:MaxItems=10
 	RenewalHistory []RenewalAttempt `json:"renewalHistory,omitempty"`
 }
 

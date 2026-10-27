@@ -46,6 +46,10 @@ const (
 	RotationStateError
 )
 
+// maxRenewalHistory must match the +kubebuilder:validation:MaxItems marker on
+// UserStatus.RenewalHistory.
+const maxRenewalHistory = 10
+
 // RotationManager handles atomic certificate rotation with forward secrecy
 type RotationManager struct {
 	client        client.Client
@@ -331,8 +335,11 @@ func (rm *RotationManager) recordUniqueAttempt(user *authv1alpha1.User, attempt 
 		}
 	}
 
-	if len(history) >= 10 {
-		history = history[1:]
+	// Trim to the newest entries rather than dropping one, so a history that
+	// already exceeds the CRD's maxItems converges instead of failing every
+	// status update.
+	if len(history) >= maxRenewalHistory {
+		history = history[len(history)-maxRenewalHistory+1:]
 	}
 
 	user.Status.RenewalHistory = append(history, attempt)
