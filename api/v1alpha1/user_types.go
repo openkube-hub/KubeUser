@@ -8,7 +8,10 @@ import (
 // Spec types
 //
 
-// RoleSpec defines namespace-scoped access by binding to an existing Role or ClusterRole
+// RoleSpec defines namespace-scoped access by binding to an existing Role or ClusterRole.
+// Exactly one of existingRole or existingClusterRole must be set; an empty
+// string counts as unset, matching the webhook and controller checks.
+// +kubebuilder:validation:XValidation:rule="(has(self.existingRole) && size(self.existingRole) > 0) != (has(self.existingClusterRole) && size(self.existingClusterRole) > 0)",message="exactly one of existingRole or existingClusterRole must be set"
 type RoleSpec struct {
 	// Namespace where the RoleBinding will be created
 	// +kubebuilder:validation:MinLength=1

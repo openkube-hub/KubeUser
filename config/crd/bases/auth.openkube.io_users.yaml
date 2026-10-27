@@ -125,8 +125,10 @@ spec:
                   RoleSpec.BindingKey — a composite key can't be a CRD listMapKey, so it
                   lives in code. MaxItems is a deliberate object-size/DoS bound.
                 items:
-                  description: RoleSpec defines namespace-scoped access by binding
-                    to an existing Role or ClusterRole
+                  description: |-
+                    RoleSpec defines namespace-scoped access by binding to an existing Role or ClusterRole.
+                    Exactly one of existingRole or existingClusterRole must be set; an empty
+                    string counts as unset, matching the webhook and controller checks.
                   properties:
                     existingClusterRole:
                       description: |-
@@ -148,6 +150,12 @@ spec:
                   required:
                   - namespace
                   type: object
+                  x-kubernetes-validations:
+                  - message: exactly one of existingRole or existingClusterRole must
+                      be set
+                    rule: (has(self.existingRole) && size(self.existingRole) > 0)
+                      != (has(self.existingClusterRole) && size(self.existingClusterRole)
+                      > 0)
                 maxItems: 100
                 type: array
             required:
