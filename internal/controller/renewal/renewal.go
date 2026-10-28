@@ -170,7 +170,8 @@ func (rc *RenewalCalculator) UpdateUserRenewalStatus(user *authv1alpha1.User, ce
 	}
 
 	// Update status fields with consolidated NextRenewalAt
-	user.Status.ExpiryTime = certExpiry.Format(time.RFC3339)
+	expiry := metav1.NewTime(certExpiry).Rfc3339Copy()
+	user.Status.ExpiryTime = &expiry
 
 	// Only set NextRenewalAt if auto-renewal is enabled
 	if helpers.GetAutoRenew(user) {

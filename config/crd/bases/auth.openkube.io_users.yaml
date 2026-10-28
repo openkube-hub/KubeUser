@@ -224,8 +224,9 @@ spec:
                 type: array
               expiryTime:
                 description: |-
-                  ExpiryTime is the actual expiry timestamp (RFC3339 format)
-                  This comes from the actual certificate NotAfter time when available
+                  ExpiryTime is the certificate's NotAfter time.
+                  Serialized as an RFC3339 string, the same wire format as before it was typed.
+                format: date-time
                 type: string
               message:
                 description: Message provides details about the current status

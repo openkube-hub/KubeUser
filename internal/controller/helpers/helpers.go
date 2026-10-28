@@ -113,21 +113,14 @@ func UpdateUserStatus(ctx context.Context, r client.Client, user *authv1alpha1.U
 	var newPhase, newMessage string
 
 	// Check if user certificate has expired (only if ExpiryTime is set)
-	if user.Status.ExpiryTime != "" {
-		if expiry, err := time.Parse(time.RFC3339, user.Status.ExpiryTime); err == nil {
-			if time.Now().After(expiry) {
-				newPhase = PhaseExpired
-				newMessage = "User certificate has expired"
-				logger.Info("User certificate has expired", "expiry", user.Status.ExpiryTime)
-			} else {
-				// Certificate is still valid, calculate active status message
-				// We hardcode PhaseActive to satisfy 'unparam' linter
-				newPhase = PhaseActive
-				newMessage = calculateActiveStatus(user)
-			}
+	if user.Status.ExpiryTime != nil {
+		if time.Now().After(user.Status.ExpiryTime.Time) {
+			newPhase = PhaseExpired
+			newMessage = "User certificate has expired"
+			logger.Info("User certificate has expired", "expiry", user.Status.ExpiryTime)
 		} else {
-			logger.Error(err, "Failed to parse expiry time", "expiryTime", user.Status.ExpiryTime)
-			// If we can't parse expiry time, fallback to Active
+			// Certificate is still valid, calculate active status message
+			// We hardcode PhaseActive to satisfy 'unparam' linter
 			newPhase = PhaseActive
 			newMessage = calculateActiveStatus(user)
 		}

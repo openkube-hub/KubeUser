@@ -85,7 +85,7 @@ func (p *X509Provider) Ensure(ctx context.Context, user *authv1alpha1.User) (boo
 	logger.Info("Using certificate duration", "duration", duration)
 
 	// CRITICAL: Check if TTL has changed and force rotation if needed
-	if user.Status.ExpiryTime != "" {
+	if user.Status.ExpiryTime != nil {
 		needsTTLRotation, err := p.checkIfTTLChanged(ctx, user, duration)
 		if err != nil {
 			logger.Error(err, "Failed to check TTL change")
@@ -157,10 +157,8 @@ func (p *X509Provider) Ensure(ctx context.Context, user *authv1alpha1.User) (boo
 	}
 
 	// Record cert expiry metric after initial cert creation
-	if p.metrics != nil && statusChanged && user.Status.ExpiryTime != "" {
-		if expiry, err := time.Parse(time.RFC3339, user.Status.ExpiryTime); err == nil {
-			p.metrics.SetCertExpiry(user.Namespace, user.Name, "client", expiry)
-		}
+	if p.metrics != nil && statusChanged && user.Status.ExpiryTime != nil {
+		p.metrics.SetCertExpiry(user.Namespace, user.Name, "client", user.Status.ExpiryTime.Time)
 	}
 
 	if requeueNeeded {
@@ -178,16 +176,12 @@ func (p *X509Provider) checkIfTTLChanged(ctx context.Context, user *authv1alpha1
 	logger := logf.FromContext(ctx)
 
 	// Parse current certificate expiry from status
-	if user.Status.ExpiryTime == "" {
+	if user.Status.ExpiryTime == nil {
 		logger.Info("No expiry time in status, cannot check TTL change")
 		return false, nil
 	}
 
-	certExpiry, err := time.Parse(time.RFC3339, user.Status.ExpiryTime)
-	if err != nil {
-		logger.Error(err, "Failed to parse certificate expiry time", "expiryTime", user.Status.ExpiryTime)
-		return false, err
-	}
+	certExpiry := user.Status.ExpiryTime.Time
 
 	now := time.Now()
 	timeUntilExpiry := certExpiry.Sub(now)
@@ -317,14 +311,8 @@ func (p *X509Provider) checkIfRenewalNeeded(ctx context.Context, user *authv1alp
 	}
 
 	// Fallback: parse certificate expiry from status
-	if user.Status.ExpiryTime != "" {
-		certExpiry, err := time.Parse(time.RFC3339, user.Status.ExpiryTime)
-		if err != nil {
-			logger.Error(err, "Failed to parse certificate expiry time", "expiryTime", user.Status.ExpiryTime)
-			return false, err
-		}
-
-		return p.renewalCalculator.ShouldRenewNow(user, certExpiry, certDuration)
+	if user.Status.ExpiryTime != nil {
+		return p.renewalCalculator.ShouldRenewNow(user, user.Status.ExpiryTime.Time, certDuration)
 	}
 
 	// No expiry information available, assume no renewal needed

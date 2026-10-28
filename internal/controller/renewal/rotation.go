@@ -806,9 +806,9 @@ func (rm *RotationManager) updateUserStatusAfterRotation(user *authv1alpha1.User
 	changed := false
 
 	// 1. Set ExpiryTime (Always show this so user knows when cert dies)
-	newExpiryTime := certExpiry.Format(time.RFC3339)
-	if user.Status.ExpiryTime != newExpiryTime {
-		user.Status.ExpiryTime = newExpiryTime
+	newExpiryTime := metav1.NewTime(certExpiry).Rfc3339Copy()
+	if !helpers.SemanticTimePtrMatch(user.Status.ExpiryTime, &newExpiryTime) {
+		user.Status.ExpiryTime = &newExpiryTime
 		changed = true
 	}
 
