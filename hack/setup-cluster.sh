@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 IMG="${IMG:-ghcr.io/openkube-hub/kubeuser-controller:latest}"
 UPGRADE_ONLY=false
+WITH_MONITORING=false
+RECREATE=false
 
 # ── Colours ────────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -16,7 +18,9 @@ die()     { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 
 for arg in "$@"; do
   case "$arg" in
-    --upgrade-only) UPGRADE_ONLY=true ;;
+    --upgrade-only)    UPGRADE_ONLY=true ;;
+    --with-monitoring) WITH_MONITORING=true ;;
+    --recreate)        RECREATE=true ;;
     *) die "Unknown argument: $arg" ;;
   esac
 done
@@ -26,24 +30,45 @@ for cmd in kind kubectl helm curl docker make; do
   command -v "$cmd" &>/dev/null || die "'$cmd' not found — please install it first."
 done
 
-if [[ "${UPGRADE_ONLY}" == "false" ]]; then
+[[ "${UPGRADE_ONLY}" == "true" && "${RECREATE}" == "true" ]] \
+  && die "--upgrade-only and --recreate are mutually exclusive."
 
-# ── 1. Tear down existing cluster ──────────────────────────────────────────────
+# ── 1. Reuse or (re)create the kind cluster ───────────────────────────────────
+CLUSTER_EXISTS=false
 if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
-  warn "Cluster '${CLUSTER_NAME}' already exists — deleting it."
-  kind delete cluster --name "${CLUSTER_NAME}"
-  success "Deleted cluster '${CLUSTER_NAME}'."
+  CLUSTER_EXISTS=true
 fi
 
-# ── 2. Create new cluster ──────────────────────────────────────────────────────
-info "Creating kind cluster '${CLUSTER_NAME}' (1 control-plane + 1 worker)…"
-kind create cluster --config "${SCRIPT_DIR}/kind.yaml"
-success "Cluster '${CLUSTER_NAME}' is up."
+if [[ "${CLUSTER_EXISTS}" == "true" && "${RECREATE}" == "true" ]]; then
+  warn "--recreate: deleting existing cluster '${CLUSTER_NAME}'."
+  kind delete cluster --name "${CLUSTER_NAME}"
+  success "Deleted cluster '${CLUSTER_NAME}'."
+  CLUSTER_EXISTS=false
+fi
+
+if [[ "${CLUSTER_EXISTS}" == "true" ]]; then
+  # Point kubectl/helm at the kind cluster explicitly: the current context may
+  # belong to a different cluster, and every later step acts on it.
+  info "Cluster '${CLUSTER_NAME}' is already up — reusing it (pass --recreate to start fresh)."
+  kind export kubeconfig --name "${CLUSTER_NAME}"
+  success "kubectl context set to kind-${CLUSTER_NAME}."
+elif [[ "${UPGRADE_ONLY}" == "true" ]]; then
+  die "--upgrade-only needs a running '${CLUSTER_NAME}' kind cluster — run without it first."
+else
+  # ── 2. Create new cluster ────────────────────────────────────────────────────
+  info "Creating kind cluster '${CLUSTER_NAME}' (1 control-plane + 1 worker)…"
+  kind create cluster --config "${SCRIPT_DIR}/kind.yaml"
+  success "Cluster '${CLUSTER_NAME}' is up."
+fi
+
+if [[ "${UPGRADE_ONLY}" == "false" ]]; then
 
 # ── 3. Helm repos ──────────────────────────────────────────────────────────────
 info "Adding / updating Helm repos…"
 helm repo add jetstack             https://charts.jetstack.io                            --force-update
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts    --force-update
+if [[ "${WITH_MONITORING}" == "true" ]]; then
+  helm repo add prometheus-community https://prometheus-community.github.io/helm-charts  --force-update
+fi
 helm repo update
 success "Helm repos ready."
 
@@ -65,26 +90,31 @@ helm upgrade --install cert-manager jetstack/cert-manager \
 success "cert-manager ${CERT_MANAGER_VERSION} installed."
 
 # ── 5. kube-prometheus-stack ──────────────────────────────────────────────────
-# Installed BEFORE the KubeUser chart so the monitoring.coreos.com/v1
-# ServiceMonitor CRD exists when KubeUser's chart renders. Reordering this
-# above the KubeUser install reintroduces the "no matches for kind
-# ServiceMonitor" failure on a fresh cluster.
-info "Creating monitoring namespace and importing dashboard ConfigMap…"
-kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
-kubectl apply -f "${SCRIPT_DIR}/monitoring/kubeuser-dashboard-configmap.yaml"
+# Opt-in with --with-monitoring.
+if [[ "${WITH_MONITORING}" == "true" ]]; then
+  # Installed BEFORE the KubeUser chart so the monitoring.coreos.com/v1
+  # ServiceMonitor CRD exists when KubeUser's chart renders. Reordering this
+  # above the KubeUser install reintroduces the "no matches for kind
+  # ServiceMonitor" failure on a fresh cluster.
+  info "Creating monitoring namespace and importing dashboard ConfigMap…"
+  kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
+  kubectl apply -f "${SCRIPT_DIR}/monitoring/kubeuser-dashboard-configmap.yaml"
 
-PROM_CHART_VERSION="82.15.1"
-info "Installing kube-prometheus-stack ${PROM_CHART_VERSION}…"
+  PROM_CHART_VERSION="82.15.1"
+  info "Installing kube-prometheus-stack ${PROM_CHART_VERSION}…"
 
-helm upgrade --install kube-prometheus-stack \
-  prometheus-community/kube-prometheus-stack \
-  --namespace monitoring \
-  --version "${PROM_CHART_VERSION}" \
-  -f "${SCRIPT_DIR}/monitoring/kube-prometheus-stack-values.yaml" \
-  --wait \
-  --timeout 10m
+  helm upgrade --install kube-prometheus-stack \
+    prometheus-community/kube-prometheus-stack \
+    --namespace monitoring \
+    --version "${PROM_CHART_VERSION}" \
+    -f "${SCRIPT_DIR}/monitoring/kube-prometheus-stack-values.yaml" \
+    --wait \
+    --timeout 10m
 
-success "kube-prometheus-stack ${PROM_CHART_VERSION} installed."
+  success "kube-prometheus-stack ${PROM_CHART_VERSION} installed."
+else
+  info "Skipping kube-prometheus-stack (pass --with-monitoring to install it)."
+fi
 
 fi # --upgrade-only skip end
 
@@ -102,22 +132,53 @@ success "Image loaded."
 API_SERVER=$(kind get kubeconfig --name "${CLUSTER_NAME}" | grep 'server:' | awk '{print $2}')
 info "API server: ${API_SERVER}"
 
-info "Installing KubeUser Helm chart…"
+# The ServiceMonitor needs the monitoring.coreos.com CRD, which only exists
+# when kube-prometheus-stack is installed. Detecting it (rather than keying off
+# the flag) keeps --upgrade-only working whether or not the cluster was
+# created with --with-monitoring.
+SERVICE_MONITOR=false
+if kubectl get crd servicemonitors.monitoring.coreos.com &>/dev/null; then
+  SERVICE_MONITOR=true
+fi
+
+# The tag is reused across builds and pullPolicy is IfNotPresent, so an
+# unchanged pod template would leave a re-run on the old binary. Stamping a
+# hash of the image's layer digests makes helm roll the pods exactly when the
+# image content changed. (.Id is not usable: BuildKit's provenance attestation
+# gives every build a new manifest-list digest even when nothing changed.)
+if command -v sha256sum &>/dev/null; then SHA256=(sha256sum); else SHA256=(shasum -a 256); fi
+IMAGE_HASH=$(docker image inspect --format '{{json .RootFS.Layers}}' "${IMG}" | "${SHA256[@]}" | cut -c1-16)
+
+info "Installing / upgrading KubeUser Helm chart (serviceMonitor=${SERVICE_MONITOR})…"
 helm upgrade --install kubeuser "${REPO_ROOT}/helm/kubeuser" \
   --namespace kubeuser \
   --create-namespace \
   --set image.pullPolicy=IfNotPresent \
+  --set-string "podAnnotations.kubeuser\\.openkube\\.io/image-hash=${IMAGE_HASH}" \
   --set env.KUBERNETES_API_SERVER="${API_SERVER}" \
   --set metrics.enabled=true \
   --set metrics.certManager.enabled=true \
-  --set metrics.serviceMonitor.enabled=true \
+  --set metrics.serviceMonitor.enabled="${SERVICE_MONITOR}" \
   --wait \
   --timeout 5m
-success "KubeUser installed."
+success "KubeUser installed / upgraded."
 
 # ── 9. Apply example user ─────────────────────────────────────────────────────
 info "Applying example user from examples/users/minimal-viewer.yaml…"
-kubectl apply -f "${REPO_ROOT}/examples/users/minimal-viewer.yaml"
+# helm --wait returns once the pods are Ready, but the webhook Service's
+# endpoints can lag behind, so the first admission call may be refused.
+# Retry until the webhook answers.
+applied=false
+for _ in $(seq 1 60); do
+  if kubectl apply -f "${REPO_ROOT}/examples/users/minimal-viewer.yaml" 2>/dev/null; then
+    applied=true
+    break
+  fi
+  sleep 2
+done
+[[ "${applied}" == "true" ]] \
+  || kubectl apply -f "${REPO_ROOT}/examples/users/minimal-viewer.yaml" \
+  || die "could not apply the example user within 120s (is the webhook reachable?)"
 
 info "Waiting for alice-viewer to become Active…"
 kubectl wait --for=jsonpath='{.status.phase}'=Active user/alice-viewer --timeout=120s
@@ -163,9 +224,11 @@ echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━
 echo -e "${GREEN}  Cluster '${CLUSTER_NAME}' is ready.${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
-echo "  Grafana    → kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80"
-echo "               http://localhost:3000  (admin / admin)"
-echo ""
+if [[ "${SERVICE_MONITOR}" == "true" ]]; then
+  echo "  Grafana    → kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80"
+  echo "               http://localhost:3000  (admin / admin)"
+  echo ""
+fi
 echo "  KubeUser   → kubectl -n kubeuser get pods"
 echo "  Kubeconfig → /tmp/kubeconfig  (alice-viewer)"
 echo ""
