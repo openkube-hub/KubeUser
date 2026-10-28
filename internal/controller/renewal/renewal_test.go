@@ -229,3 +229,64 @@ func TestValidateRenewalConfig_Basic(t *testing.T) {
 		})
 	}
 }
+
+func TestCalculateRenewalTimeWithJitter_StaysWithinWindow(t *testing.T) {
+	rc := NewRenewalCalculator()
+	user := &authv1alpha1.User{
+		Spec: authv1alpha1.UserSpec{Auth: &authv1alpha1.AuthSpec{AutoRenew: boolPtr(true)}},
+	}
+	certDuration := 24 * time.Hour
+	certExpiry := time.Now().Add(certDuration)
+
+	base, err := rc.CalculateRenewalTime(user, certExpiry, certDuration)
+	if err != nil {
+		t.Fatalf("CalculateRenewalTime() error = %v", err)
+	}
+	window := time.Duration(float64(certExpiry.Sub(base)) * MaxJitterPercentage)
+
+	for range 1000 {
+		got, err := rc.CalculateRenewalTimeWithJitter(user, certExpiry, certDuration)
+		if err != nil {
+			t.Fatalf("CalculateRenewalTimeWithJitter() error = %v", err)
+		}
+		if jitter := got.Sub(base); jitter < -window || jitter >= window {
+			t.Fatalf("jitter %v outside [-%v, %v)", jitter, window, window)
+		}
+	}
+}
+
+// An expired certificate leaves a non-positive jitter window. rand.N (like
+// rand.Int63n before it) panics on a non-positive bound, which would crash the
+// reconcile goroutine instead of requeueing the User for immediate renewal.
+func TestGetRequeueAfter_ExpiredCertificateDoesNotPanic(t *testing.T) {
+	rc := NewRenewalCalculator()
+	user := &authv1alpha1.User{
+		Spec: authv1alpha1.UserSpec{Auth: &authv1alpha1.AuthSpec{AutoRenew: boolPtr(true)}},
+	}
+
+	for _, expiredFor := range []time.Duration{0, time.Second, time.Hour} {
+		certExpiry := time.Now().Add(-expiredFor)
+
+		var (
+			requeueAfter time.Duration
+			err          error
+		)
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("GetRequeueAfter panicked for a certificate expired %v ago: %v", expiredFor, r)
+				}
+			}()
+			requeueAfter, err = rc.GetRequeueAfter(user, certExpiry, 24*time.Hour)
+		}()
+
+		if err != nil {
+			t.Fatalf("GetRequeueAfter() error = %v", err)
+		}
+		// 0 when the renewal time is strictly before now, or the 1m floor when
+		// both time.Now() reads coincide; either way, renew promptly.
+		if requeueAfter > time.Minute {
+			t.Errorf("expired %v ago: requeueAfter = %v, want <= 1m (renew promptly)", expiredFor, requeueAfter)
+		}
+	}
+}
