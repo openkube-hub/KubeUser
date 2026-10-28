@@ -5,6 +5,7 @@ linters:
   default: none
   enable:
     - copyloopvar
+    - depguard
     - dupl
     - errcheck
     - ginkgolinter
@@ -22,6 +23,12 @@ linters:
     - unparam
     - unused
   settings:
+    depguard:
+      rules:
+        main:
+          deny:
+            - pkg: math/rand$
+              desc: use math/rand/v2; its top-level functions are lock-free and safe for concurrent reconciles
     goconst:
       min-occurrences: 10
     revive:

@@ -10,7 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
 	"strings"
 	"time"
 
@@ -665,7 +665,7 @@ func (r *UserReconciler) calculateSmartRequeue(ctx context.Context, user *authv1
 		requeueAfter := renewalTime.Sub(now)
 
 		// Add small jitter to prevent thundering herd
-		jitter := time.Duration(rand.Int63n(int64(5 * time.Minute)))
+		jitter := rand.N(5 * time.Minute)
 		requeueAfter += jitter
 
 		// Cap requeue time to reasonable limits

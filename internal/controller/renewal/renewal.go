@@ -8,7 +8,7 @@ package renewal
 
 import (
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
 	"time"
 
 	authv1alpha1 "github.com/openkube-hub/KubeUser/api/v1alpha1"
@@ -103,8 +103,16 @@ func (rc *RenewalCalculator) CalculateRenewalTimeWithJitter(user *authv1alpha1.U
 	renewalBuffer := certExpiry.Sub(baseRenewalTime)
 	jitterWindow := time.Duration(float64(renewalBuffer) * MaxJitterPercentage)
 
-	// Add random jitter (can be negative to spread load)
-	jitter := time.Duration(rand.Int63n(int64(jitterWindow*2))) - jitterWindow
+	// An expired certificate leaves no buffer to jitter within, and rand.N
+	// panics on a non-positive bound.
+	if jitterWindow <= 0 {
+		return baseRenewalTime, nil
+	}
+
+	// Add random jitter (can be negative to spread load). The top-level
+	// math/rand/v2 functions are safe for concurrent reconciles without
+	// a shared lock, so no per-reconciler source is needed.
+	jitter := rand.N(2*jitterWindow) - jitterWindow
 
 	return baseRenewalTime.Add(jitter), nil
 }
