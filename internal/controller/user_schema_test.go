@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -140,5 +141,51 @@ var _ = Describe("User spec schema: roles[] exclusivity (issue #70)", func() {
 		err := create("issue70-empty-both", `"existingRole":"","existingClusterRole":""`)
 		Expect(apierrors.IsInvalid(err)).To(BeTrue(),
 			`two explicit empty strings must be rejected as "neither set", got: %v`, err)
+	})
+})
+
+// Regression tests for issue #61: status.expiryTime moved from a plain string
+// to *metav1.Time without a CRD version bump. That is only safe if both wire
+// directions are unchanged: objects persisted by the string-typed controller
+// must decode into the typed field, and the typed field must serialize to the
+// exact RFC3339 form that kubectl jsonpath, docs and scripts already read.
+var _ = Describe("User status schema: expiryTime wire format (issue #61)", func() {
+	ctx := context.Background()
+
+	It("round-trips between the legacy string form and *metav1.Time", func() {
+		key := types.NamespacedName{Name: "issue61-expirytime"}
+		u := &authv1alpha1.User{
+			ObjectMeta: metav1.ObjectMeta{Name: key.Name},
+			Spec: authv1alpha1.UserSpec{
+				Auth: &authv1alpha1.AuthSpec{Type: &[]string{auth.AuthTypeX509}[0], TTL: "24h"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, u)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, u) })
+
+		const legacy = "2027-01-02T03:04:05Z"
+
+		By("writing status.expiryTime as the string the old controller produced")
+		raw := &unstructured.Unstructured{}
+		raw.SetGroupVersionKind(authv1alpha1.GroupVersion.WithKind("User"))
+		Expect(k8sClient.Get(ctx, key, raw)).To(Succeed())
+		Expect(unstructured.SetNestedField(raw.Object, legacy, "status", "expiryTime")).To(Succeed())
+		Expect(k8sClient.Status().Update(ctx, raw)).To(Succeed())
+
+		By("reading it back through the typed client")
+		var typed authv1alpha1.User
+		Expect(k8sClient.Get(ctx, key, &typed)).To(Succeed())
+		Expect(typed.Status.ExpiryTime).NotTo(BeNil(), "legacy string expiryTime must decode into *metav1.Time")
+		Expect(typed.Status.ExpiryTime.UTC().Format(time.RFC3339)).To(Equal(legacy))
+
+		By("writing through the typed client and reading the raw string back")
+		next := metav1.NewTime(typed.Status.ExpiryTime.Add(time.Hour))
+		typed.Status.ExpiryTime = &next
+		Expect(k8sClient.Status().Update(ctx, &typed)).To(Succeed())
+		Expect(k8sClient.Get(ctx, key, raw)).To(Succeed())
+		got, _, err := unstructured.NestedString(raw.Object, "status", "expiryTime")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(Equal("2027-01-02T04:04:05Z"),
+			"typed expiryTime must serialize to the same RFC3339 string the string-typed field stored")
 	})
 })

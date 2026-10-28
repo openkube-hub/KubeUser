@@ -464,7 +464,7 @@ func (r *UserReconciler) reconcileAuthentication(ctx context.Context, user *auth
 
 		// Check if status was changed during authentication processing (e.g., Phase set to "Renewing")
 		additionalChanges := oldPhase != user.Status.Phase ||
-			oldExpiryTime != user.Status.ExpiryTime ||
+			!helpers.SemanticTimePtrMatch(oldExpiryTime, user.Status.ExpiryTime) ||
 			oldRotationStep != user.Status.RotationStep ||
 			!helpers.SemanticTimePtrMatch(oldNextRenewalAt, user.Status.NextRenewalAt)
 
@@ -472,7 +472,7 @@ func (r *UserReconciler) reconcileAuthentication(ctx context.Context, user *auth
 	}
 
 	// Compare old vs new values to detect additional changes
-	expiryChanged := oldExpiryTime != user.Status.ExpiryTime
+	expiryChanged := !helpers.SemanticTimePtrMatch(oldExpiryTime, user.Status.ExpiryTime)
 	renewalChanged := !helpers.SemanticTimePtrMatch(oldNextRenewalAt, user.Status.NextRenewalAt)
 	phaseChanged := oldPhase != user.Status.Phase
 	rotationStepChanged := oldRotationStep != user.Status.RotationStep
@@ -517,13 +517,9 @@ func (r *UserReconciler) syncStatusFields(ctx context.Context, user *authv1alpha
 		logger.Info("Auto-renewal disabled, explicitly clearing NextRenewalAt field")
 		user.Status.NextRenewalAt = nil
 		changed = true
-	} else if helpers.GetAutoRenew(user) && user.Status.ExpiryTime != "" {
+	} else if helpers.GetAutoRenew(user) && user.Status.ExpiryTime != nil {
 		// Auto-renewal is enabled - check if NextRenewalAt needs recalculation
-		certExpiry, err := time.Parse(time.RFC3339, user.Status.ExpiryTime)
-		if err != nil {
-			logger.Error(err, "Failed to parse existing certificate expiry time", "expiryTime", user.Status.ExpiryTime)
-			return changed
-		}
+		certExpiry := user.Status.ExpiryTime.Time
 
 		// Route through CalculateRenewalTime so the NextRenewalAt written here
 		// obeys the same safety floor as GetRequeueAfter, keeping the status
@@ -612,23 +608,19 @@ func (r *UserReconciler) calculateRequeue(ctx context.Context, user *authv1alpha
 	}
 
 	// Legacy expiry-based requeue for non-auto-renewal users
-	if user.Status.Phase == helpers.PhaseActive && user.Status.ExpiryTime != "" {
-		if expiryTime, err := time.Parse(time.RFC3339, user.Status.ExpiryTime); err == nil {
-			timeUntilExpiry := time.Until(expiryTime)
-			logger.Info("Time until expiry", "duration", timeUntilExpiry)
+	if user.Status.Phase == helpers.PhaseActive && user.Status.ExpiryTime != nil {
+		timeUntilExpiry := time.Until(user.Status.ExpiryTime.Time)
+		logger.Info("Time until expiry", "duration", timeUntilExpiry)
 
-			if timeUntilExpiry <= 0 {
-				// User has expired - this should trigger a status update in the next reconciliation
-				logger.Info("User has expired, will be marked as expired in next reconciliation")
-				// Don't modify status here - let the next reconciliation handle it properly
-				return ctrl.Result{Requeue: true} // Immediate requeue to handle expiry
-			} else if timeUntilExpiry < 24*time.Hour {
-				// Requeue to check expiry more frequently
-				logger.Info("User expires soon, requeueing in 1 hour")
-				return ctrl.Result{RequeueAfter: time.Hour}
-			}
-		} else {
-			logger.Error(err, "Failed to parse expiry time", "expiryTime", user.Status.ExpiryTime)
+		if timeUntilExpiry <= 0 {
+			// User has expired - this should trigger a status update in the next reconciliation
+			logger.Info("User has expired, will be marked as expired in next reconciliation")
+			// Don't modify status here - let the next reconciliation handle it properly
+			return ctrl.Result{Requeue: true} // Immediate requeue to handle expiry
+		} else if timeUntilExpiry < 24*time.Hour {
+			// Requeue to check expiry more frequently
+			logger.Info("User expires soon, requeueing in 1 hour")
+			return ctrl.Result{RequeueAfter: time.Hour}
 		}
 	}
 
@@ -685,11 +677,8 @@ func (r *UserReconciler) calculateSmartRequeue(ctx context.Context, user *authv1
 	}
 
 	// Fallback: calculate from certificate expiry
-	if user.Status.ExpiryTime != "" {
-		certExpiry, err := time.Parse(time.RFC3339, user.Status.ExpiryTime)
-		if err != nil {
-			return 0, fmt.Errorf("failed to parse certificate expiry: %w", err)
-		}
+	if user.Status.ExpiryTime != nil {
+		certExpiry := user.Status.ExpiryTime.Time
 
 		requeueAfter, err := r.RenewalCalculator.GetRequeueAfter(user, certExpiry, certDuration)
 		if err != nil {
@@ -746,15 +735,13 @@ func (r *UserReconciler) updateAggregateMetrics() {
 		}
 		stats[ns].phaseCounts[phase]++
 
-		if u.Status.ExpiryTime != "" {
-			if expiry, err := time.Parse(time.RFC3339, u.Status.ExpiryTime); err == nil {
-				until := expiry.Sub(now)
-				if until > 0 && until <= 24*time.Hour {
-					stats[ns].within24h++
-				}
-				if until > 0 && until <= 7*24*time.Hour {
-					stats[ns].within7d++
-				}
+		if u.Status.ExpiryTime != nil {
+			until := u.Status.ExpiryTime.Sub(now)
+			if until > 0 && until <= 24*time.Hour {
+				stats[ns].within24h++
+			}
+			if until > 0 && until <= 7*24*time.Hour {
+				stats[ns].within7d++
 			}
 		}
 	}

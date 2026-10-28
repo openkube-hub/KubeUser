@@ -290,3 +290,32 @@ func TestGetRequeueAfter_ExpiredCertificateDoesNotPanic(t *testing.T) {
 		}
 	}
 }
+
+// status.expiryTime is persisted at RFC3339 (second) precision. If the
+// in-memory value kept sub-second precision, every reconcile would compare it
+// against the truncated value read back from the API server, see a "change",
+// and issue a status write: a reconcile loop. The string form used to truncate
+// implicitly via Format(time.RFC3339); the typed field must do so explicitly.
+func TestUpdateUserRenewalStatus_StoresExpiryAtSecondPrecision(t *testing.T) {
+	rc := NewRenewalCalculator()
+	user := &authv1alpha1.User{
+		Spec: authv1alpha1.UserSpec{Auth: &authv1alpha1.AuthSpec{AutoRenew: boolPtr(true)}},
+	}
+	certExpiry := time.Now().Add(48 * time.Hour).Add(123456789 * time.Nanosecond)
+
+	if err := rc.UpdateUserRenewalStatus(user, certExpiry, 48*time.Hour); err != nil {
+		t.Fatalf("UpdateUserRenewalStatus() error = %v", err)
+	}
+
+	got := user.Status.ExpiryTime
+	if got == nil {
+		t.Fatal("ExpiryTime not set")
+	}
+	if got.Nanosecond() != 0 {
+		t.Fatalf("ExpiryTime kept sub-second precision (%v); it would never match the value read back from the API server", got.Time)
+	}
+	roundTripped := metav1.NewTime(certExpiry).Rfc3339Copy()
+	if !got.Equal(&roundTripped) {
+		t.Errorf("ExpiryTime = %v, want %v", got.Time, roundTripped.Time)
+	}
+}

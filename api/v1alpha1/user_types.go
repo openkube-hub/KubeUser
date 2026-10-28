@@ -95,10 +95,10 @@ type UserSpec struct {
 
 // UserStatus defines the observed state of User
 type UserStatus struct {
-	// ExpiryTime is the actual expiry timestamp (RFC3339 format)
-	// This comes from the actual certificate NotAfter time when available
+	// ExpiryTime is the certificate's NotAfter time.
+	// Serialized as an RFC3339 string, the same wire format as before it was typed.
 	// +optional
-	ExpiryTime string `json:"expiryTime,omitempty"`
+	ExpiryTime *metav1.Time `json:"expiryTime,omitempty"`
 
 	// NextRenewalAt is when the certificate will be automatically renewed
 	// This consolidates the previous RenewalTime and NextRenewalTime fields

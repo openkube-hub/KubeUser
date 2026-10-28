@@ -414,9 +414,9 @@ func calculateCertificateMetadata(ctx context.Context, user *authv1alpha1.User, 
 	oldNextRenewalAt := user.Status.NextRenewalAt
 
 	// Update ExpiryTime
-	newExpiryTime := certExpiryTime.Format(time.RFC3339)
-	if oldExpiryTime != newExpiryTime {
-		user.Status.ExpiryTime = newExpiryTime
+	newExpiryTime := metav1.NewTime(certExpiryTime).Rfc3339Copy()
+	if !helpers.SemanticTimePtrMatch(oldExpiryTime, &newExpiryTime) {
+		user.Status.ExpiryTime = &newExpiryTime
 		statusChanged = true
 		logger.Info("ExpiryTime changed", "old", oldExpiryTime, "new", newExpiryTime)
 	}
