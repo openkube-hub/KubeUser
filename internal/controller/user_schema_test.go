@@ -189,3 +189,59 @@ var _ = Describe("User status schema: expiryTime wire format (issue #61)", func(
 			"typed expiryTime must serialize to the same RFC3339 string the string-typed field stored")
 	})
 })
+
+// Regression tests for issue #62: status.phase and status.rotationStep are
+// now CRD enums. Every value the controller writes must be in the enum, or
+// a User holding it has every later Status().Update() rejected and wedges.
+var _ = Describe("User status schema: phase and rotationStep enums (issue #62)", func() {
+	ctx := context.Background()
+
+	It("accepts every phase and rotation step the controller writes, rejects others", func() {
+		key := types.NamespacedName{Name: "issue62-status-enums"}
+		u := &authv1alpha1.User{
+			ObjectMeta: metav1.ObjectMeta{Name: key.Name},
+			Spec: authv1alpha1.UserSpec{
+				Auth: &authv1alpha1.AuthSpec{Type: &[]string{auth.AuthTypeX509}[0], TTL: "24h"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, u)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, u) })
+
+		for _, phase := range []authv1alpha1.UserPhase{
+			authv1alpha1.PhasePending,
+			authv1alpha1.PhaseActive,
+			authv1alpha1.PhaseReady,
+			authv1alpha1.PhaseRenewing,
+			authv1alpha1.PhaseExpired,
+			authv1alpha1.PhaseError,
+		} {
+			Expect(k8sClient.Get(ctx, key, u)).To(Succeed())
+			u.Status.Phase = phase
+			Expect(k8sClient.Status().Update(ctx, u)).To(Succeed(),
+				"status.phase %q is written by the controller and must be in the CRD enum", phase)
+		}
+
+		for _, step := range []authv1alpha1.RotationStep{
+			authv1alpha1.RotationStepGeneratingKey,
+			authv1alpha1.RotationStepCreatingCSR,
+			authv1alpha1.RotationStepWaitingForApproval,
+			authv1alpha1.RotationStepPerformingAtomicFlip,
+			authv1alpha1.RotationStepFinalizing,
+		} {
+			Expect(k8sClient.Get(ctx, key, u)).To(Succeed())
+			u.Status.RotationStep = step
+			Expect(k8sClient.Status().Update(ctx, u)).To(Succeed(),
+				"status.rotationStep %q is written by the controller and must be in the CRD enum", step)
+		}
+
+		Expect(k8sClient.Get(ctx, key, u)).To(Succeed())
+		u.Status.Phase = "Bogus"
+		err := k8sClient.Status().Update(ctx, u)
+		Expect(apierrors.IsInvalid(err)).To(BeTrue(), "unknown status.phase must be rejected by the CRD enum, got: %v", err)
+
+		Expect(k8sClient.Get(ctx, key, u)).To(Succeed())
+		u.Status.RotationStep = "Bogus"
+		err = k8sClient.Status().Update(ctx, u)
+		Expect(apierrors.IsInvalid(err)).To(BeTrue(), "unknown status.rotationStep must be rejected by the CRD enum, got: %v", err)
+	})
+})

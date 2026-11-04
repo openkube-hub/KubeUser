@@ -93,6 +93,36 @@ type UserSpec struct {
 // Status types
 //
 
+// UserPhase is the high-level lifecycle phase of a User.
+// The enum must list every value the controller has ever written: an
+// existing object holding a value missing from it would have every
+// subsequent status update rejected.
+// +kubebuilder:validation:Enum=Pending;Active;Ready;Renewing;Expired;Error
+type UserPhase string
+
+const (
+	PhasePending  UserPhase = "Pending"
+	PhaseActive   UserPhase = "Active"
+	PhaseReady    UserPhase = "Ready"
+	PhaseRenewing UserPhase = "Renewing"
+	PhaseExpired  UserPhase = "Expired"
+	PhaseError    UserPhase = "Error"
+)
+
+// RotationStep is the current step of an in-progress certificate rotation.
+// The enum must list every value the controller has ever written, for the
+// same reason as UserPhase.
+// +kubebuilder:validation:Enum=GeneratingKey;CreatingCSR;WaitingForApproval;PerformingAtomicFlip;Finalizing
+type RotationStep string
+
+const (
+	RotationStepGeneratingKey        RotationStep = "GeneratingKey"
+	RotationStepCreatingCSR          RotationStep = "CreatingCSR"
+	RotationStepWaitingForApproval   RotationStep = "WaitingForApproval"
+	RotationStepPerformingAtomicFlip RotationStep = "PerformingAtomicFlip"
+	RotationStepFinalizing           RotationStep = "Finalizing"
+)
+
 // UserStatus defines the observed state of User
 type UserStatus struct {
 	// ExpiryTime is the certificate's NotAfter time.
@@ -107,12 +137,12 @@ type UserStatus struct {
 
 	// Phase is a simple high-level status (Pending, Active, Expired, Error, Renewing)
 	// +optional
-	Phase string `json:"phase,omitempty"`
+	Phase UserPhase `json:"phase,omitempty"`
 
 	// RotationStep provides granular visibility into certificate rotation progress
 	// Values: GeneratingKey, CreatingCSR, WaitingForApproval, PerformingAtomicFlip, Finalizing
 	// +optional
-	RotationStep string `json:"rotationStep,omitempty"`
+	RotationStep RotationStep `json:"rotationStep,omitempty"`
 
 	// Message provides details about the current status
 	// +optional

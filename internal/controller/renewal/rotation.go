@@ -139,9 +139,9 @@ func (rm *RotationManager) RotateUserCertificate(ctx context.Context, user *auth
 
 		// Force status to reflect the rotation state (Shadow Secret as Source of Truth)
 		statusChanged := false
-		if user.Status.Phase != helpers.PhaseRenewing {
+		if user.Status.Phase != authv1alpha1.PhaseRenewing {
 			logger.Info("Forcing Phase to Renewing based on Shadow Secret existence")
-			user.Status.Phase = helpers.PhaseRenewing
+			user.Status.Phase = authv1alpha1.PhaseRenewing
 			user.Status.Message = "Certificate rotation in progress"
 			statusChanged = true
 
@@ -157,8 +157,8 @@ func (rm *RotationManager) RotateUserCertificate(ctx context.Context, user *auth
 	logger.Info("Starting new certificate rotation", "user", username)
 
 	// Update status to Renewing with initial rotation step
-	user.Status.Phase = helpers.PhaseRenewing
-	user.Status.RotationStep = "GeneratingKey"
+	user.Status.Phase = authv1alpha1.PhaseRenewing
+	user.Status.RotationStep = authv1alpha1.RotationStepGeneratingKey
 	user.Status.Message = "Starting certificate renewal"
 
 	// Create Shadow Secret first (this makes rotation atomic)
@@ -168,7 +168,7 @@ func (rm *RotationManager) RotateUserCertificate(ctx context.Context, user *auth
 	}
 
 	// Update rotation step after successful Shadow Secret creation
-	user.Status.RotationStep = "CreatingCSR"
+	user.Status.RotationStep = authv1alpha1.RotationStepCreatingCSR
 
 	// Emit event for rotation start
 	rm.eventRecorder.Event(user, "Normal", "RotationStarted", "Certificate rotation initiated")
@@ -201,9 +201,9 @@ func (rm *RotationManager) continueRotationFromShadow(ctx context.Context, user 
 	logger.Info("Continuing rotation from Shadow Secret", "csrName", csrName, "currentPhase", user.Status.Phase, "currentRotationStep", user.Status.RotationStep)
 
 	// Ensure Phase is Renewing (Shadow Secret is source of truth)
-	if user.Status.Phase != helpers.PhaseRenewing {
+	if user.Status.Phase != authv1alpha1.PhaseRenewing {
 		logger.Info("Forcing Phase to Renewing during rotation continuation")
-		user.Status.Phase = helpers.PhaseRenewing
+		user.Status.Phase = authv1alpha1.PhaseRenewing
 		user.Status.Message = "Certificate rotation in progress"
 		statusChanged = true
 	}
@@ -232,8 +232,8 @@ func (rm *RotationManager) continueRotationFromShadow(ctx context.Context, user 
 	}
 
 	// Update rotation step based on current state
-	if user.Status.RotationStep != "WaitingForApproval" {
-		user.Status.RotationStep = "WaitingForApproval"
+	if user.Status.RotationStep != authv1alpha1.RotationStepWaitingForApproval {
+		user.Status.RotationStep = authv1alpha1.RotationStepWaitingForApproval
 		statusChanged = true
 	}
 
@@ -258,8 +258,8 @@ func (rm *RotationManager) continueRotationFromShadow(ctx context.Context, user 
 	rm.eventRecorder.Event(user, "Normal", "CSRApproved", fmt.Sprintf("CSR %s approved, performing atomic secret update", csrName))
 
 	// Update rotation step for atomic flip
-	if user.Status.RotationStep != "PerformingAtomicFlip" {
-		user.Status.RotationStep = "PerformingAtomicFlip"
+	if user.Status.RotationStep != authv1alpha1.RotationStepPerformingAtomicFlip {
+		user.Status.RotationStep = authv1alpha1.RotationStepPerformingAtomicFlip
 		statusChanged = true
 	}
 
@@ -284,8 +284,8 @@ func (rm *RotationManager) continueRotationFromShadow(ctx context.Context, user 
 	rm.eventRecorder.Event(user, "Normal", "RotationCompleted", "Certificate rotation completed successfully")
 
 	// Update rotation step for finalization
-	if user.Status.RotationStep != "Finalizing" {
-		user.Status.RotationStep = "Finalizing"
+	if user.Status.RotationStep != authv1alpha1.RotationStepFinalizing {
+		user.Status.RotationStep = authv1alpha1.RotationStepFinalizing
 		statusChanged = true
 	}
 
@@ -835,8 +835,8 @@ func (rm *RotationManager) updateUserStatusAfterRotation(user *authv1alpha1.User
 	}
 
 	// 3. Update Phase and clear RotationStep
-	if user.Status.Phase != helpers.PhaseActive {
-		user.Status.Phase = helpers.PhaseActive
+	if user.Status.Phase != authv1alpha1.PhaseActive {
+		user.Status.Phase = authv1alpha1.PhaseActive
 		changed = true
 	}
 

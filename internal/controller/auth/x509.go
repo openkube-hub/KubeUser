@@ -96,7 +96,7 @@ func (p *X509Provider) Ensure(ctx context.Context, user *authv1alpha1.User) (boo
 			statusChanged, result, err := p.rotationManager.RotateUserCertificate(ctx, user, duration)
 			if err != nil {
 				logger.Error(err, "Certificate rotation failed")
-				user.Status.Phase = "Error"
+				user.Status.Phase = authv1alpha1.PhaseError
 				user.Status.Message = fmt.Sprintf("Certificate renewal failed: %v", err)
 				return true, nil, fmt.Errorf("certificate renewal failed: %w", err)
 			}
@@ -127,7 +127,7 @@ func (p *X509Provider) Ensure(ctx context.Context, user *authv1alpha1.User) (boo
 			statusChanged, result, err := p.rotationManager.RotateUserCertificate(ctx, user, duration)
 			if err != nil {
 				logger.Error(err, "Certificate rotation failed")
-				user.Status.Phase = "Error"
+				user.Status.Phase = authv1alpha1.PhaseError
 				user.Status.Message = fmt.Sprintf("Certificate renewal failed: %v", err)
 
 				// Return status change and error (no requeue for actual errors)
