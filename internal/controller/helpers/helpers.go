@@ -23,16 +23,6 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-const (
-	// Phase constants to avoid goconst issues
-	PhaseError    = "Error"
-	PhaseExpired  = "Expired"
-	PhaseReady    = "Ready"
-	PhaseActive   = "Active"
-	PhasePending  = "Pending"
-	PhaseRenewing = "Renewing"
-)
-
 const DefaultKubeconfigClusterName = "cluster"
 
 // GetAutoRenew returns the autoRenew value with default of true if not specified
@@ -101,7 +91,7 @@ func UpdateUserStatus(ctx context.Context, r client.Client, user *authv1alpha1.U
 	// CRITICAL: Protect the Renewing state from being overwritten
 	// When a user is in the Renewing phase, the rotation state machine owns the status
 	// and RBAC reconciliation must not interfere with it
-	if user.Status.Phase == PhaseRenewing {
+	if user.Status.Phase == authv1alpha1.PhaseRenewing {
 		logger.Info("User is in Renewing phase, skipping status update to preserve rotation state")
 		return false, nil
 	}
@@ -110,23 +100,24 @@ func UpdateUserStatus(ctx context.Context, r client.Client, user *authv1alpha1.U
 	changed := false
 
 	// Calculate new phase and message
-	var newPhase, newMessage string
+	var newPhase authv1alpha1.UserPhase
+	var newMessage string
 
 	// Check if user certificate has expired (only if ExpiryTime is set)
 	if user.Status.ExpiryTime != nil {
 		if time.Now().After(user.Status.ExpiryTime.Time) {
-			newPhase = PhaseExpired
+			newPhase = authv1alpha1.PhaseExpired
 			newMessage = "User certificate has expired"
 			logger.Info("User certificate has expired", "expiry", user.Status.ExpiryTime)
 		} else {
 			// Certificate is still valid, calculate active status message
 			// We hardcode PhaseActive to satisfy 'unparam' linter
-			newPhase = PhaseActive
+			newPhase = authv1alpha1.PhaseActive
 			newMessage = calculateActiveStatus(user)
 		}
 	} else {
 		// No expiry time set yet, set user as active
-		newPhase = PhaseActive
+		newPhase = authv1alpha1.PhaseActive
 		newMessage = calculateActiveStatus(user)
 	}
 
@@ -196,33 +187,33 @@ func calculateActiveStatus(user *authv1alpha1.User) string {
 	// Join parts into a human-readable sentence
 	switch len(parts) {
 	case 1:
-		return fmt.Sprintf("%s with %s", PhaseActive, parts[0])
+		return fmt.Sprintf("%s with %s", authv1alpha1.PhaseActive, parts[0])
 	case 2:
-		return fmt.Sprintf("%s with %s and %s", PhaseActive, parts[0], parts[1])
+		return fmt.Sprintf("%s with %s and %s", authv1alpha1.PhaseActive, parts[0], parts[1])
 	case 3:
-		return fmt.Sprintf("%s with %s, %s, and %s", PhaseActive, parts[0], parts[1], parts[2])
+		return fmt.Sprintf("%s with %s, %s, and %s", authv1alpha1.PhaseActive, parts[0], parts[1], parts[2])
 	default:
-		return PhaseActive
+		return string(authv1alpha1.PhaseActive)
 	}
 }
 
 // updateStatusCondition updates the status condition based on the current phase and message.
 // Returns true if the condition was changed.
-func updateStatusCondition(user *authv1alpha1.User, phase, message string) bool {
+func updateStatusCondition(user *authv1alpha1.User, phase authv1alpha1.UserPhase, message string) bool {
 	now := metav1.NewTime(time.Now())
-	conditionType := PhaseReady
+	conditionType := string(authv1alpha1.PhaseReady)
 	conditionStatus := metav1.ConditionTrue
 	conditionReason := "UserProvisioned"
 	conditionMessage := message
 
 	switch phase {
-	case PhaseError:
+	case authv1alpha1.PhaseError:
 		conditionStatus = metav1.ConditionFalse
 		conditionReason = "ProvisioningFailed"
-	case PhaseExpired:
+	case authv1alpha1.PhaseExpired:
 		conditionStatus = metav1.ConditionFalse
 		conditionReason = "CertificateExpired"
-	case PhasePending:
+	case authv1alpha1.PhasePending:
 		conditionStatus = metav1.ConditionFalse
 		conditionReason = "Provisioning"
 	}
@@ -265,7 +256,7 @@ func SetActiveStatus(user *authv1alpha1.User) {
 	message := calculateActiveStatus(user)
 
 	// Explicitly set the phase to PhaseActive to satisfy linting requirements
-	user.Status.Phase = PhaseActive
+	user.Status.Phase = authv1alpha1.PhaseActive
 	user.Status.Message = message
 }
 

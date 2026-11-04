@@ -240,6 +240,13 @@ spec:
               phase:
                 description: Phase is a simple high-level status (Pending, Active,
                   Expired, Error, Renewing)
+                enum:
+                - Pending
+                - Active
+                - Ready
+                - Renewing
+                - Expired
+                - Error
                 type: string
               renewalHistory:
                 description: |-
@@ -272,6 +279,12 @@ spec:
                 description: |-
                   RotationStep provides granular visibility into certificate rotation progress
                   Values: GeneratingKey, CreatingCSR, WaitingForApproval, PerformingAtomicFlip, Finalizing
+                enum:
+                - GeneratingKey
+                - CreatingCSR
+                - WaitingForApproval
+                - PerformingAtomicFlip
+                - Finalizing
                 type: string
             type: object
         required:

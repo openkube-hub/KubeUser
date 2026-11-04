@@ -227,7 +227,7 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 	// Update user sync status metric
 	if r.Metrics != nil {
-		r.Metrics.SetUserSyncStatus(user.Namespace, user.Name, user.Status.Phase == helpers.PhaseActive)
+		r.Metrics.SetUserSyncStatus(user.Namespace, user.Name, user.Status.Phase == authv1alpha1.PhaseActive)
 	}
 
 	return requeueResult, nil
@@ -244,7 +244,7 @@ func (r *UserReconciler) reconcileBusinessLogic(ctx context.Context, user *authv
 	// without passing the webhook must not be issued a certificate.
 	if err := auth.ValidateUserIdentity(user); err != nil {
 		logger.Error(err, "Invalid user identity")
-		user.Status.Phase = helpers.PhaseError
+		user.Status.Phase = authv1alpha1.PhaseError
 		user.Status.Message = fmt.Sprintf("Invalid user identity: %v", err)
 		return true, nil, err
 	}
@@ -252,7 +252,7 @@ func (r *UserReconciler) reconcileBusinessLogic(ctx context.Context, user *authv
 	// Validate auth specification
 	if err := auth.ValidateAuthSpec(user); err != nil {
 		logger.Error(err, "Invalid auth specification")
-		user.Status.Phase = helpers.PhaseError
+		user.Status.Phase = authv1alpha1.PhaseError
 		user.Status.Message = fmt.Sprintf("Invalid auth specification: %v", err)
 		return true, nil, err
 	}
@@ -260,7 +260,7 @@ func (r *UserReconciler) reconcileBusinessLogic(ctx context.Context, user *authv
 	// Reconcile RBAC resources (no side effects)
 	rbacNeedsUpdate, err := r.reconcileRBAC(ctx, user)
 	if err != nil {
-		user.Status.Phase = helpers.PhaseError
+		user.Status.Phase = authv1alpha1.PhaseError
 		user.Status.Message = fmt.Sprintf("Failed to reconcile RBAC: %v", err)
 		return true, nil, err
 	}
@@ -273,12 +273,12 @@ func (r *UserReconciler) reconcileBusinessLogic(ctx context.Context, user *authv
 	if err != nil {
 		// Handle specific error cases
 		if strings.Contains(err.Error(), "not yet implemented") {
-			user.Status.Phase = helpers.PhaseError
+			user.Status.Phase = authv1alpha1.PhaseError
 			user.Status.Message = fmt.Sprintf("Authentication type not implemented: %v", err)
 			return true, nil, err
 		}
 
-		user.Status.Phase = helpers.PhaseError
+		user.Status.Phase = authv1alpha1.PhaseError
 		user.Status.Message = fmt.Sprintf("Failed to ensure authentication: %v", err)
 		// Propagate the error so the workqueue rate limiter drives retries with
 		// per-item exponential backoff and jitter (see SetupWithManager). A fixed
@@ -305,7 +305,7 @@ func (r *UserReconciler) reconcileBusinessLogic(ctx context.Context, user *authv
 // Returns true if the status was changed.
 func (r *UserReconciler) ensureInitialStatus(user *authv1alpha1.User) bool {
 	if user.Status.Phase == "" {
-		user.Status.Phase = helpers.PhasePending
+		user.Status.Phase = authv1alpha1.PhasePending
 		user.Status.Message = "Initializing user resources"
 		return true
 	}
@@ -585,7 +585,7 @@ func (r *UserReconciler) calculateRequeue(ctx context.Context, user *authv1alpha
 	logger := logf.FromContext(ctx)
 
 	// No requeue for users in terminal states
-	if user.Status.Phase == helpers.PhaseError || user.Status.Phase == helpers.PhaseExpired {
+	if user.Status.Phase == authv1alpha1.PhaseError || user.Status.Phase == authv1alpha1.PhaseExpired {
 		logger.Info("User in terminal state, no requeue needed", "phase", user.Status.Phase)
 		return ctrl.Result{}
 	}
@@ -597,7 +597,7 @@ func (r *UserReconciler) calculateRequeue(ctx context.Context, user *authv1alpha
 	}
 
 	// Smart requeue for auto-renewal enabled users
-	if helpers.GetAutoRenew(user) && user.Status.Phase == helpers.PhaseActive {
+	if helpers.GetAutoRenew(user) && user.Status.Phase == authv1alpha1.PhaseActive {
 		requeueAfter, err := r.calculateSmartRequeue(ctx, user)
 		if err != nil {
 			logger.Error(err, "Failed to calculate smart requeue, using default")
@@ -608,7 +608,7 @@ func (r *UserReconciler) calculateRequeue(ctx context.Context, user *authv1alpha
 	}
 
 	// Legacy expiry-based requeue for non-auto-renewal users
-	if user.Status.Phase == helpers.PhaseActive && user.Status.ExpiryTime != nil {
+	if user.Status.Phase == authv1alpha1.PhaseActive && user.Status.ExpiryTime != nil {
 		timeUntilExpiry := time.Until(user.Status.ExpiryTime.Time)
 		logger.Info("Time until expiry", "duration", timeUntilExpiry)
 
@@ -725,7 +725,7 @@ func (r *UserReconciler) updateAggregateMetrics() {
 		if ns == "" {
 			ns = "cluster"
 		}
-		phase := u.Status.Phase
+		phase := string(u.Status.Phase)
 		if phase == "" {
 			phase = "unknown"
 		}
